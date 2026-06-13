@@ -44,7 +44,7 @@ PREV_POP  = 0.03
 # run REGENIE step1 separately within each stratum (cleaner r_g, ~2x compute).
 # False = reuse the full-sample step1 predictors (cheaper, slightly conservative
 # toward r_g = 1).
-STRATUM_SPECIFIC_STEP1 = False
+STRATUM_SPECIFIC_STEP1 = True
 
 # ---------------------------------------------------------------------------
 # derived
