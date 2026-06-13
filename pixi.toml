@@ -1,4 +1,4 @@
-[project]
+[workspace]
 name = "y-strat-gwas"
 description = "SNP x Y-haplogroup interaction + cross-stratum genetic correlation"
 channels = ["conda-forge", "bioconda", "gwforg"]
@@ -7,10 +7,22 @@ platforms = ["linux-64"]
 [dependencies]
 regenie = ">=3.4"
 plink2  = "*"
-python  = ">=3.10"
+python  = ">=3.10,<3.13"
 pandas  = "*"
 numpy   = "*"
 scipy   = "*"
-gwf     = "*"    
+gwf     = "*"
+pip = ">=26.1.2,<27"
+setuptools = ">=69"
+wheel = ">=0.47.0,<0.48"
+# LDSC (python3 fork) runtime deps — installed as conda binaries so pip never
+# has to build their C extensions. ldsc itself is pip-installed with --no-deps.
+bitarray   = "*"
+pybedtools = "*"
+
+[tasks]
+# Install the LDSC python3 fork without letting pip build any C-extension deps
+# (numpy/pandas/scipy/bitarray/pybedtools all come from conda above).
+postinstall = "pip install --no-deps --no-build-isolation ./ldsc"
 
 # LDSC is Python 2.7 and lives in a SEPARATE conda env (see environment-ldsc.yml).
