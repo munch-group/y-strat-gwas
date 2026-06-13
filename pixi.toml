@@ -1,0 +1,16 @@
+[project]
+name = "y-strat-gwas"
+description = "SNP x Y-haplogroup interaction + cross-stratum genetic correlation"
+channels = ["conda-forge", "bioconda", "gwforg"]
+platforms = ["linux-64"]
+
+[dependencies]
+regenie = ">=3.4"
+plink2  = "*"
+python  = ">=3.10"
+pandas  = "*"
+numpy   = "*"
+scipy   = "*"
+gwf     = "*"    
+
+# LDSC is Python 2.7 and lives in a SEPARATE conda env (see environment-ldsc.yml).

@@ -1,0 +1,17 @@
+name: ldsc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=2.7
+  - numpy=1.16
+  - scipy=1.2
+  - pandas=0.20
+  - bitarray=0.8
+  - pip
+# Then clone the LDSC repo (referenced by LDSC_DIR in workflow.py):
+#   git clone https://github.com/bulik/ldsc.git
+#
+# If you'd rather stay on Python 3, a maintained port exists
+# (e.g. github.com/JonJala/ldsc or the `ldsc`/`gwaslab` py3 reimplementations);
+# point LDSCRUN/LDSC_DIR at it and drop this env.
