@@ -26,16 +26,39 @@ from gwf import Workflow
 def _env(name, default):
     return os.environ.get("YS_" + name, default)
 
-ACCOUNT   = _env("ACCOUNT", "your_genomedk_project")   # slurm account
+ACCOUNT   = _env("ACCOUNT", None)   # slurm account
 ROOT      = os.path.dirname(os.path.abspath(__file__))
 
-BFILE     = _env("BFILE", "/path/to/genotypes")            # plink1 prefix .bed/.bim/.fam (autosomes)
-PHENO     = _env("PHENO", "/path/to/phenotypes.txt")       # FID IID autism   (1=case, 0=control, NA)
-BASECOVAR = _env("BASECOVAR", "/path/to/covariates_base.txt")  # FID IID PC1..PCk age batch ...
-HAPFILE   = _env("HAPFILE", "/path/to/haplogroup.txt")     # FID IID Hap      (I or R)
+# Defaults below point at the bundled SYNTHETIC TEST DATA (tests/work/data) so the
+# workflow runs out of the box: build it once with
+#   pixi run --manifest-path ./pixi.toml python tests/run_pipeline_test.py
+# then `gwf -b local run`. SWAP EACH for your real data when ready -- NPC and
+# ENV_PREFIX below are likewise set for the synthetic data / sandbox.
+BFILE     = _env("BFILE", "%s/tests/work/data/genotypes" % ROOT)             # plink1 .bed/.bim/.fam (autosomes)
+PHENO     = _env("PHENO", "%s/tests/work/data/phenotypes.txt" % ROOT)        # FID IID autism (1=case,0=control,NA)
+BASECOVAR = _env("BASECOVAR", "%s/tests/work/data/covariates_base.txt" % ROOT)  # FID IID PC1..PCk age batch ...
+HAPFILE   = _env("HAPFILE", "%s/tests/work/data/haplogroup.txt" % ROOT)      # FID IID Hap (I or R)
 PHENONAME = _env("PHENONAME", "autism")
-NPC       = int(_env("NPC", "20"))
+NPC       = int(_env("NPC", "10"))                         # synthetic data has 10 PCs (set yours for real data)
 CATCOVAR  = _env("CATCOVAR", "batch")                      # comma-sep categorical covars, or ""
+
+# Parallelise the REGENIE step-2 scans (interaction, gwas_{I,R}) by chromosome:
+# a fan-out job per chromosome + a gather. Accepts ranges/lists, e.g. "1-22" or
+# "1,2,5-9"; "" = single job. Results are identical to the single job. Defaults
+# to the autosomes so a cluster run fans out; set "" for one job per scan.
+SPLIT_CHROMS = _env("SPLIT_CHROMS", "1-22")
+
+# Split the Monte-Carlo permutation targets (perm_interaction, lava_perm_*) into
+# this many independent batches (different seeds, pooled) for parallel speedup.
+# 1 = single job.
+PERM_BATCHES = int(_env("PERM_BATCHES", "4"))
+
+# Extra environment prepended to every command. Defaulted to KMP_AFFINITY=disabled
+# for the bundled synthetic data (it dodges an MKL/OpenMP thread-affinity assertion
+# seen in some sandboxes/containers, and being baked into the spec strings it also
+# reaches a gwf worker whose own environment lacks it). CLEAR IT for a real cluster
+# run (set ENV_PREFIX = "" or YS_ENV_PREFIX="") unless you actually need it.
+ENV_PREFIX = _env("ENV_PREFIX", "KMP_AFFINITY=disabled")
 
 # ancestry-matched permutation re-test of interaction hits (Arm A, post-hoc).
 PERM_TOP          = int(_env("PERM_TOP", "500"))      # top interaction hits to re-test
@@ -46,7 +69,7 @@ PERM_FORCE_SNPS   = _env("PERM_FORCE_SNPS", "")       # comma-sep SNP IDs to alw
 
 # LAVA local cross-stratum genetic correlation (optional 3rd arm). Set LAVA_LOCI
 # to enable; empty disables. Format: "name=chr:start-end,name2=chr:start-end".
-LAVA_LOCI       = _env("LAVA_LOCI", "")               # "" disables the LAVA arm
+LAVA_LOCI       = _env("LAVA_LOCI", "")  # "" disables LAVA; synthetic: realblock=20:9988-2241939,confblock=21:8710-2271328
 LAVA_REF        = _env("LAVA_REF", BFILE)             # plink ref for in-sample LD
 LAVA_PARTITION  = _env("LAVA_PARTITION", "")          # LAVA blocks file (R headline only)
 LAVA_N_CONTROLS = int(_env("LAVA_N_CONTROLS", "300")) # negative-control loci
@@ -56,13 +79,14 @@ RSCRIPT         = _env("RSCRIPT", "Rscript")          # for the LAVA R step
 # chrX (optional): plink1 prefix with X variants coded as chromosome 23 and the
 # SEX column filled in the .fam (1=male). Empty string disables all X targets.
 # REGENIE codes non-PAR males as hemizygous (0/2) automatically from sex + build.
-XBFILE       = _env("XBFILE", "")                          # "" => skip chrX entirely
+XBFILE       = _env("XBFILE", "")  # "" => skip chrX; synthetic X is tests/work/data/genotypesX
 GENOME_BUILD = _env("GENOME_BUILD", "hg38")               # for REGENIE --par-region
 
-# LDSC reference data (download separately; see README)
+# LDSC reference data (download separately; see README). Defaults point at the
+# bundled synthetic reference -- swap EUR_LD/HM3 for the real 1000G EUR / HapMap3.
 LDSC_DIR  = _env("LDSC_DIR", "%s/ldsc" % ROOT)             # py3 LDSC fork, vendored + pip-installed by pixi
-EUR_LD    = _env("EUR_LD", "/path/to/eur_w_ld_chr")        # 1000G EUR LD scores (directory)
-HM3       = _env("HM3", "/path/to/w_hm3.snplist")          # HapMap3 SNP list for --merge-alleles
+EUR_LD    = _env("EUR_LD", "%s/tests/work/eur_w_ld_chr" % ROOT)   # EUR LD scores dir (synthetic ref)
+HM3       = _env("HM3", "%s/tests/work/data/w_hm3.snplist" % ROOT)  # HapMap3 SNP list for --merge-alleles
 
 # liability-scale h2 (edit to your male-specific population prevalence)
 PREV_POP  = float(_env("PREV_POP", "0.03"))
@@ -75,7 +99,8 @@ STRATUM_SPECIFIC_STEP1 = _env("STRATUM_SPECIFIC_STEP1", "True").lower() in ("1",
 # ---------------------------------------------------------------------------
 # derived
 # ---------------------------------------------------------------------------
-PIXI    = "pixi run --manifest-path %s/pixi.toml" % ROOT
+PIXI    = ("%s " % ENV_PREFIX if ENV_PREFIX else "") \
+          + "pixi run --manifest-path %s/pixi.toml" % ROOT
 LDSCRUN = "%s python" % PIXI                   # py3 LDSC fork, pip-installed by pixi postinstall
 
 OUT = _env("OUT", "%s/results" % ROOT)
@@ -88,7 +113,22 @@ BASE_COLS = ",".join(PCS + ["age"])
 INT_COLS  = ",".join(PCS + ["age", "Hap"] + ["%s_x_Hap" % p for p in PCS])
 CAT       = ("--catCovarList %s" % CATCOVAR) if CATCOVAR else ""
 
-gwf = Workflow(defaults={"account": ACCOUNT})
+def _chroms(spec):
+    """Parse "1-22" / "1,2,5-9" into a list of ints."""
+    out = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-")
+            out += list(range(int(a), int(b) + 1))
+        else:
+            out.append(int(part))
+    return out
+
+defaults = {"account": ACCOUNT} if ACCOUNT else {}
+gwf = Workflow(defaults=defaults)
 
 # ---------------------------------------------------------------------------
 # QC backbone for REGENIE step 1
@@ -138,20 +178,38 @@ gwf.target("step1_full",
 """.format(pixi=PIXI, bfile=BFILE, out=OUT, pheno=PHENO, ph=PHENONAME,
            covar=BASECOVAR, base=BASE_COLS, cat=CAT, tmp=TMP)
 
-gwf.target("interaction",
-           inputs=["%s/step1_full_pred.list" % OUT, "%s/int_covars.txt" % OUT],
-           outputs=["%s/gxhap_%s.regenie" % (OUT, PHENONAME)],
-           cores=16, memory="32g", walltime="24:00:00") << """
-{pixi} regenie --step 2 --bed {bfile} \
+def _interaction_step2(chr_flag, out_prefix):
+    return """
+{pixi} regenie --step 2 --bed {bfile} {chrflag} \
   --phenoFile {pheno} --phenoColList {ph} \
   --covarFile {out}/int_covars.txt --covarColList {intcols} {cat} \
   --bt --firth --approx --pThresh 0.01 \
   --interaction Hap \
   --bsize 400 --minMAC 20 \
   --pred {out}/step1_full_pred.list \
-  --threads 16 --out {out}/gxhap
-""".format(pixi=PIXI, bfile=BFILE, out=OUT, pheno=PHENO, ph=PHENONAME,
-           intcols=INT_COLS, cat=CAT)
+  --threads 16 --out {outpref}
+""".format(pixi=PIXI, bfile=BFILE, chrflag=chr_flag, out=OUT, pheno=PHENO,
+           ph=PHENONAME, intcols=INT_COLS, cat=CAT, outpref=out_prefix)
+
+_GXHAP = "%s/gxhap_%s.regenie" % (OUT, PHENONAME)
+if SPLIT_CHROMS:
+    _chunks = []
+    for _c in _chroms(SPLIT_CHROMS):
+        _ch = "%s/gxhap_chr%d_%s.regenie" % (OUT, _c, PHENONAME)
+        gwf.target("interaction_chr%d" % _c,
+                   inputs=["%s/step1_full_pred.list" % OUT, "%s/int_covars.txt" % OUT],
+                   outputs=[_ch], cores=16, memory="32g", walltime="24:00:00") \
+            << _interaction_step2("--chr %d" % _c, "%s/gxhap_chr%d" % (OUT, _c))
+        _chunks.append(_ch)
+    gwf.target("interaction", inputs=_chunks, outputs=[_GXHAP],
+               cores=1, memory="4g", walltime="00:30:00") << """
+{pixi} python {root}/scripts/concat_regenie.py --out {gx} --inputs {chunks}
+""".format(pixi=PIXI, root=ROOT, gx=_GXHAP, chunks=" ".join(_chunks))
+else:
+    gwf.target("interaction",
+               inputs=["%s/step1_full_pred.list" % OUT, "%s/int_covars.txt" % OUT],
+               outputs=[_GXHAP], cores=16, memory="32g", walltime="24:00:00") \
+        << _interaction_step2("", "%s/gxhap" % OUT)
 
 gwf.target("top_int",
            inputs=["%s/gxhap_%s.regenie" % (OUT, PHENONAME)],
@@ -168,22 +226,47 @@ gwf.target("top_int",
 # local ancestry at a locus is not removed (flag survivors for local ancestry /
 # replication). See scripts/ancestry_matched_perm.py.
 _FORCE = ("--force-snps %s" % PERM_FORCE_SNPS) if PERM_FORCE_SNPS else ""
-gwf.target("perm_interaction",
-           inputs=["%s/gxhap_%s.regenie" % (OUT, PHENONAME), "%s.bed" % BFILE],
-           outputs=["%s/perm_interactions.tsv" % OUT,
-                    "%s/perm_lambda.txt" % OUT,
-                    "%s/perm_strata_selection.tsv" % OUT],
-           cores=8, memory="16g", walltime="08:00:00") << """
+
+def _perm_cmd(nperm, gnperm, seed, extra, out_prefix):
+    return """
 {pixi} python {root}/scripts/ancestry_matched_perm.py \
   --regenie {out}/gxhap_{ph}.regenie \
   --bfile {bfile} --covar {covar} --hap {hap} \
   --pheno {pheno} --pheno-name {ph} --npc {npc} \
   --top {top} --panel {panel} --nperm {nperm} --global-nperm {gnperm} {force} \
-  --seed 1 --out-prefix {out}/perm
+  --seed {seed} --select-seed 1 {extra} --out-prefix {outpref}
 """.format(pixi=PIXI, root=ROOT, out=OUT, ph=PHENONAME, bfile=BFILE,
-           covar=BASECOVAR, hap=HAPFILE, pheno=PHENO, npc=NPC,
-           top=PERM_TOP, panel=PERM_PANEL, nperm=PERM_NPERM,
-           gnperm=PERM_GLOBAL_NPERM, force=_FORCE)
+           covar=BASECOVAR, hap=HAPFILE, pheno=PHENO, npc=NPC, top=PERM_TOP,
+           panel=PERM_PANEL, nperm=nperm, gnperm=gnperm, force=_FORCE,
+           seed=seed, extra=extra, outpref=out_prefix)
+
+_PERM_INPUTS = ["%s/gxhap_%s.regenie" % (OUT, PHENONAME), "%s.bed" % BFILE]
+if PERM_BATCHES > 1:
+    _pb_nperm = max(1, PERM_NPERM // PERM_BATCHES)
+    _pb_gnperm = max(1, PERM_GLOBAL_NPERM // PERM_BATCHES)
+    _pcounts, _plnulls = [], []
+    for _k in range(PERM_BATCHES):
+        _cp = "%s/perm_b%d_counts.tsv" % (OUT, _k)
+        _lp = "%s/perm_b%d_lambda_null.tsv" % (OUT, _k)
+        gwf.target("perm_interaction_batch%d" % _k, inputs=_PERM_INPUTS,
+                   outputs=[_cp, _lp], cores=8, memory="16g", walltime="08:00:00") \
+            << _perm_cmd(_pb_nperm, _pb_gnperm, _k + 1, "--raw-counts",
+                         "%s/perm_b%d" % (OUT, _k))
+        _pcounts.append(_cp)
+        _plnulls.append(_lp)
+    gwf.target("perm_interaction", inputs=_pcounts + _plnulls,
+               outputs=["%s/perm_interactions.tsv" % OUT, "%s/perm_lambda.txt" % OUT],
+               cores=1, memory="4g", walltime="00:30:00") << """
+{pixi} python {root}/scripts/pool_perm.py --kind interaction \
+  --counts {counts} --lambda-nulls {lnulls} --out-prefix {out}/perm
+""".format(pixi=PIXI, root=ROOT, out=OUT, counts=" ".join(_pcounts),
+           lnulls=" ".join(_plnulls))
+else:
+    gwf.target("perm_interaction", inputs=_PERM_INPUTS,
+               outputs=["%s/perm_interactions.tsv" % OUT, "%s/perm_lambda.txt" % OUT,
+                        "%s/perm_strata_selection.tsv" % OUT],
+               cores=8, memory="16g", walltime="08:00:00") \
+        << _perm_cmd(PERM_NPERM, PERM_GLOBAL_NPERM, 1, "", "%s/perm" % OUT)
 
 # ---------------------------------------------------------------------------
 # ARM B: per-stratum GWAS -> munge -> rg / h2
@@ -210,20 +293,39 @@ for s in ("I", "R"):
         pred = "%s/step1_full_pred.list" % OUT
         pred_inputs = [pred]
 
-    gwf.target("gwas_%s" % s,
-               inputs=[keep] + pred_inputs,
-               outputs=["%s/gwas_%s_%s.regenie" % (OUT, s, PHENONAME)],
-               cores=16, memory="32g", walltime="24:00:00") << """
-{pixi} regenie --step 2 --bed {bfile} --keep {keep} \
+    def _gwas_step2(keep, pred, s, chr_flag, out_prefix):
+        return """
+{pixi} regenie --step 2 --bed {bfile} --keep {keep} {chrflag} \
   --phenoFile {pheno} --phenoColList {ph} \
   --covarFile {covar} --covarColList {base} {cat} \
   --bt --firth --approx --pThresh 0.01 \
   --bsize 400 --minMAC 20 \
   --pred {pred} \
-  --threads 16 --out {out}/gwas_{s}
-""".format(pixi=PIXI, bfile=BFILE, keep=keep, out=OUT, pheno=PHENO,
-           ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT,
-           pred=pred, s=s)
+  --threads 16 --out {outpref}
+""".format(pixi=PIXI, bfile=BFILE, keep=keep, chrflag=chr_flag, out=OUT,
+           pheno=PHENO, ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT,
+           pred=pred, outpref=out_prefix)
+
+    _gw = "%s/gwas_%s_%s.regenie" % (OUT, s, PHENONAME)
+    if SPLIT_CHROMS:
+        _gchunks = []
+        for _c in _chroms(SPLIT_CHROMS):
+            _gch = "%s/gwas_%s_chr%d_%s.regenie" % (OUT, s, _c, PHENONAME)
+            gwf.target("gwas_%s_chr%d" % (s, _c),
+                       inputs=[keep] + pred_inputs, outputs=[_gch],
+                       cores=16, memory="32g", walltime="24:00:00") \
+                << _gwas_step2(keep, pred, s, "--chr %d" % _c,
+                               "%s/gwas_%s_chr%d" % (OUT, s, _c))
+            _gchunks.append(_gch)
+        gwf.target("gwas_%s" % s, inputs=_gchunks, outputs=[_gw],
+                   cores=1, memory="4g", walltime="00:30:00") << """
+{pixi} python {root}/scripts/concat_regenie.py --out {gw} --inputs {chunks}
+""".format(pixi=PIXI, root=ROOT, gw=_gw, chunks=" ".join(_gchunks))
+    else:
+        gwf.target("gwas_%s" % s,
+                   inputs=[keep] + pred_inputs, outputs=[_gw],
+                   cores=16, memory="32g", walltime="24:00:00") \
+            << _gwas_step2(keep, pred, s, "", "%s/gwas_%s" % (OUT, s))
 
     gwf.target("munge_%s" % s,
                inputs=["%s/gwas_%s_%s.regenie" % (OUT, s, PHENONAME)],
@@ -381,20 +483,41 @@ if LAVA_LOCI:
   --pca {npc} --out {out}/lava_pcs
 """.format(pixi=PIXI, bfile=BFILE, chroms=_chroms, out=OUT, npc=NPC)
 
-    for nm, loc in _loci:
-        gwf.target("lava_perm_%s" % nm,
-                   inputs=["%s/lava_pcs.eigenvec" % OUT, "%s.bed" % BFILE],
-                   outputs=["%s/lava_%s_loci.tsv" % (OUT, nm),
-                            "%s/lava_%s_summary.txt" % (OUT, nm)],
-                   cores=8, memory="16g", walltime="12:00:00") << """
+    def _lava_cmd(nm, loc, nperm, seed, extra, out_prefix):
+        return """
 {pixi} python {root}/scripts/local_rg_perm.py \
   --bfile {bfile} --pheno {pheno} --pheno-name {ph} --hap {hap} \
   --pcs {out}/lava_pcs.eigenvec --npc {npc} \
   --locus {loc} --locus-name {nm} \
-  --n-controls {nc} --nperm {nperm} --seed 1 --out-prefix {out}/lava_{nm}
+  --n-controls {nc} --nperm {nperm} --seed {seed} --select-seed 1 {extra} \
+  --out-prefix {outpref}
 """.format(pixi=PIXI, root=ROOT, bfile=BFILE, pheno=PHENO, ph=PHENONAME,
-           hap=HAPFILE, out=OUT, npc=NPC, loc=loc, nm=nm,
-           nc=LAVA_N_CONTROLS, nperm=LAVA_NPERM)
+           hap=HAPFILE, out=OUT, npc=NPC, loc=loc, nm=nm, nc=LAVA_N_CONTROLS,
+           nperm=nperm, seed=seed, extra=extra, outpref=out_prefix)
+
+    for nm, loc in _loci:
+        _li = ["%s/lava_pcs.eigenvec" % OUT, "%s.bed" % BFILE]
+        _lout = ["%s/lava_%s_loci.tsv" % (OUT, nm), "%s/lava_%s_summary.txt" % (OUT, nm)]
+        if PERM_BATCHES > 1:
+            _lb_nperm = max(1, LAVA_NPERM // PERM_BATCHES)
+            _lcounts = []
+            for _k in range(PERM_BATCHES):
+                _cp = "%s/lava_%s_b%d_counts.tsv" % (OUT, nm, _k)
+                gwf.target("lava_perm_%s_batch%d" % (nm, _k), inputs=_li,
+                           outputs=[_cp, "%s/lava_%s_b%d_meta.tsv" % (OUT, nm, _k)],
+                           cores=8, memory="16g", walltime="12:00:00") \
+                    << _lava_cmd(nm, loc, _lb_nperm, _k + 1, "--raw-counts",
+                                 "%s/lava_%s_b%d" % (OUT, nm, _k))
+                _lcounts.append(_cp)
+            gwf.target("lava_perm_%s" % nm, inputs=_lcounts, outputs=_lout,
+                       cores=1, memory="4g", walltime="00:30:00") << """
+{pixi} python {root}/scripts/pool_perm.py --kind lava \
+  --counts {counts} --meta {out}/lava_{nm}_b0_meta.tsv --out-prefix {out}/lava_{nm}
+""".format(pixi=PIXI, root=ROOT, out=OUT, nm=nm, counts=" ".join(_lcounts))
+        else:
+            gwf.target("lava_perm_%s" % nm, inputs=_li, outputs=_lout,
+                       cores=8, memory="16g", walltime="12:00:00") \
+                << _lava_cmd(nm, loc, LAVA_NPERM, 1, "", "%s/lava_%s" % (OUT, nm))
 
     # Optional headline: real LAVA local r_g via the R package. Built only when a
     # LAVA partition file is supplied; the R step runs outside the pixi env.

@@ -1,0 +1,152 @@
+# Reading the output files
+
+This explains the result files the pipeline writes. They land in **`results/`** for a real run
+and in **`tests/work/results/`** for the bundled synthetic test (`tests/run_pipeline_test.py`) — the
+formats are identical; only the directory differs. For *why* the pipeline is built this way and
+how to interpret the statistics, see `METHODS.md`; for what produces each file, the target table
+in `CLAUDE.md`.
+
+> **On the synthetic test data the estimates are noise.** N is tiny, so LDSC `h2`/`rg` come out
+> negative or `NA` and interaction p-values are not meaningful. The files are still well-formed —
+> use them to learn the *format*, not to read off a result. On real data these become informative.
+
+Conventions across every file: **`Hap` is coded I = 1, R = 0**; REGENIE's effect allele is
+**`ALLELE1`** (`A1` after munging); REGENIE reports **`LOG10P` = −log₁₀(p)**, not `p`
+(`P = 10**(-LOG10P)`; helper scripts already convert where needed).
+
+---
+
+## Arm A — individual SNP × haplogroup interaction
+
+**`top_interactions.tsv`** — the headline list: the strongest `SNP × Hap` interaction hits.
+One row per variant (REGENIE columns), pre-filtered to the interaction test and sorted by
+significance:
+
+| column | meaning |
+|--------|---------|
+| `CHROM`, `GENPOS`, `ID` | variant location and rsID |
+| `ALLELE0` / `ALLELE1` | non-effect / **effect** allele |
+| `A1FREQ`, `N` | effect-allele frequency, sample size |
+| `TEST` | always `ADD-INT_SNPxHap` here (the interaction term) |
+| `BETA`, `SE` | interaction effect (on the logit scale) and its SE |
+| `CHISQ`, `LOG10P` | test statistic and −log₁₀(p) |
+| `P` | the p-value (added by the helper) |
+
+Read it as: large `LOG10P` (small `P`) = strong evidence the variant's effect on autism *differs*
+between I and R men. Genome-wide threshold is `5e-8` (i.e. `LOG10P > 7.3`) unless you used a
+two-step screen. The genomic-inflation factor **λ_GC** and a warning if λ > 1.10 are printed to
+the job's log (the `top_int` stdout), not into the table — λ ≫ 1 means revisit QC / the PC×Hap
+covariates before trusting hits.
+
+**`gxhap_autism.regenie`** — the *raw* REGENIE `--interaction` output `top_interactions.tsv` is
+distilled from. It has **several `TEST` rows per variant** (`ADD`, `ADD-INT_SNP`,
+`ADD-INT_SNPxHap`, …); the interaction you care about is **`ADD-INT_SNPxHap`**. (With chromosome
+split on, you may also see per-chunk `gxhap_chr<c>_autism.regenie` — these are intermediate and
+already concatenated into `gxhap_autism.regenie`.)
+
+**`perm_interactions.tsv`** — the **deconfounded re-test** of the hits (ancestry-matched
+permutation; the G-side guard REGENIE can't add). This is the column that decides whether a hit is
+credible:
+
+| column | meaning |
+|--------|---------|
+| `ID` | variant |
+| `raw_LOG10P` | its `LOG10P` from the scan (for reference) |
+| `obs_stat` | the observed interaction statistic |
+| `n_perm` | permutations used (summed across batches) |
+| **`anc_matched_emp_p`** | **empirical p vs the Hap-within-ancestry-strata null** |
+| `forced` | whether it was force-included regardless of rank |
+
+**Small `anc_matched_emp_p` ⇒ the interaction survives the ancestry-matched null** (not explained
+by *global* ancestry structure). **`anc_matched_emp_p → 1` ⇒ it collapses** = an ancestry
+artefact. Caveat (see `METHODS.md` §6): this controls confounding only to *global-PC* resolution;
+a survivor is still provisional pending local ancestry or replication.
+
+**`perm_lambda.txt`** — genome-wide companion diagnostic (`key<TAB>value`): the observed
+interaction `observed_lambda` vs the permutation-null distribution
+(`perm_null_lambda_mean`/`_2.5pct`/`_97.5pct`) and `lambda_emp_p`. A more honest calibration check
+than comparing λ to 1. Also records the chosen strata (`selected_stratum_size`,
+`within_stratum_HapPC_AUC`, `eff_N`).
+
+**`perm_strata_selection.tsv`** — the strata-granularity choice: for each candidate `target_size`,
+the within-stratum `Hap~PC` AUC (want ≈ 0.5), number of mixed strata, and effective N. The run
+picks the loosest size whose AUC ≤ threshold (the "tightening" rule).
+
+### chrX (when `XBFILE` is set)
+**`top_interactions_X.tsv`** / **`gxhapX_autism.regenie`** — exactly as above but for the
+hemizygous-coded chrX pass.
+
+---
+
+## Arm B — genome-wide cross-stratum architecture (LDSC)
+
+**`I_vs_R_rg.log`** — the **cross-stratum genetic correlation**, the well-powered global readout.
+Find the `Summary of Genetic Correlation Results` block; the key fields on the data line are
+**`rg`**, its **`se`**, and **`p`** (plus per-stratum `h2_obs` and the intercepts). Interpretation:
+**`rg` significantly below 1 ⇒ pervasive genotype × haplogroup interaction.** (`rg`≈1 with a wide SE
+⇒ underpowered, not "no interaction"; below ~5 000 per stratum it's usually uninformative.)
+
+**`h2_{I,R}.log`** — per-stratum SNP-heritability. Read the line
+`Total Liability scale h2: <estimate> (<SE>)` (liability scale, using the population + per-stratum
+sample prevalence). `Intercept` near 1 is good; `Intercept` ≫ 1 (and high `Lambda GC` / `Mean
+Chi^2`) flags residual confounding/structure.
+
+**`gwas_{I,R}_autism.regenie`** — the raw per-stratum main-effect GWAS (REGENIE step 2). Feeds Arm
+B; `gwas_{I,R}_chr<c>_autism.regenie` chunks (if split) are intermediate.
+
+**`gwas_{I,R}.forldsc.txt`** — those sumstats reshaped to LDSC-munge-ready columns
+(`SNP A1 A2 N BETA SE P`; `LOG10P→P`, `ALLELE1→A1`). **`gwas_X_{I,R}.forldsc.txt`** are the chrX
+equivalents — emitted ready to munge, but LDSC h2/rg on chrX needs an X-specific LD reference you
+supply (not wired here).
+
+**`munged_{I,R}.sumstats.gz`** — the LDSC-internal munged sumstats (`SNP A1 A2 Z N`) consumed by
+`h2`/`rg`. Not meant for direct reading.
+
+---
+
+## LAVA — local cross-stratum r_g (when `LAVA_LOCI` is set)
+
+One set of files per configured locus, named by its label, e.g. `lava_<name>_*`.
+
+**`lava_<name>_summary.txt`** — the headline for that locus (`key<TAB>value`):
+
+| key | meaning |
+|-----|---------|
+| `target_local_rg` | local cross-stratum genetic correlation at the locus (sign matters) |
+| **`target_anc_matched_p`** | ancestry-matched empirical p (small ⇒ survives the null) |
+| **`target_vs_controls_tail_frac`** | where the locus sits among SNP-count-matched **negative-control** blocks — **small ⇒ it stands out** from the genome-wide background |
+| `control_local_rg_mean`, `control_p_median` | the control panel's centre |
+| `strata_mean_size`, `within_stratum_HapPC_AUC` | the strata used |
+
+A locus is interesting only when **both** its `anc_matched_p` is small **and** its
+`tail_frac` is small — otherwise residual structure depresses local `rg` everywhere (see
+`METHODS.md` §7). Same global-PC ceiling as Arm A.
+
+**`lava_<name>_loci.tsv`** — the target row (`is_target=True`) plus every negative-control block,
+each with `local_rg` and `anc_matched_emp_p`, so you can see the distribution behind the tail
+fraction.
+
+**`lava_<name>_strata_selection.tsv`** — the strata tightening curve, as in Arm A.
+
+**`lava_local_rg.tsv`** — *only if you ran the optional LAVA R step* (`LAVA_PARTITION` set): the
+**headline** local `rg` from the real LAVA package. Pair every locus here with its
+`lava_<name>_summary.txt` permutation p — the R estimate is the effect size, the permutation p is
+the deconfounded significance.
+
+---
+
+## A 30-second decision guide
+
+- **Is a specific variant a real I-vs-R interaction?** `top_interactions(_X).tsv` genome-wide
+  significant **and** `perm_interactions.tsv` `anc_matched_emp_p` small. Even then: provisional
+  (global-PC ceiling) → confirm with local ancestry / replication.
+- **Does haplogroup reshape the architecture overall?** `I_vs_R_rg.log`: `rg` significantly < 1.
+- **Does a candidate region diverge locally?** `lava_<name>_summary.txt`: small `target_anc_matched_p`
+  **and** small `target_vs_controls_tail_frac`.
+
+## Everything else (not results)
+
+`*.log` (qc/step1/regenie/ldsc/plink), `*_pred.list`, `*.loco`, `keep_{I,R}.txt`,
+`int_covars.txt`, `qc_pass.snplist`, `lava_pcs.*`, `lava_prune.*`, and the `*_chr<c>_*` /
+`*_b<k>_*` chunk/batch files are **intermediate** — inputs to later steps or scratch for
+debugging, not final results.

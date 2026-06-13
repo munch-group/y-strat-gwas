@@ -197,10 +197,15 @@ def main():
                     help="candidate mean stratum sizes (loose->tight search)")
     ap.add_argument("--strata-auc", type=float, default=0.55,
                     help="within-stratum Hap~PC AUC at/below which strata count as homogeneous")
-    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--seed", type=int, default=1, help="permutation seed (vary per batch)")
+    ap.add_argument("--select-seed", type=int, default=1,
+                    help="panel-selection seed; keep FIXED across batches so they pool")
+    ap.add_argument("--raw-counts", action="store_true",
+                    help="emit poolable per-batch raw counts instead of final p-values")
     ap.add_argument("--out-prefix", required=True)
     a = ap.parse_args()
-    rng = np.random.default_rng(a.seed)
+    rng = np.random.default_rng(a.seed)            # permutations (batch-specific)
+    sel_rng = np.random.default_rng(a.select_seed)  # selection (fixed across batches)
 
     # ---- interaction results: pick hits + a random panel -----------------
     reg = pd.read_csv(a.regenie, sep=r"\s+", engine="python", comment="#")
@@ -213,7 +218,7 @@ def main():
     hits = list(dict.fromkeys(forced + hits))           # forced first, dedup
     panel_pool = reg["ID"].iloc[a.top:].values
     n_panel = min(a.panel, len(panel_pool))
-    panel = list(rng.choice(panel_pool, size=n_panel, replace=False)) if n_panel else []
+    panel = list(sel_rng.choice(panel_pool, size=n_panel, replace=False)) if n_panel else []
     raw_log10p = dict(zip(reg["ID"], reg["LOG10P"]))
 
     # ---- align genotypes + covariates + hap + pheno on the .fam order ----
@@ -272,18 +277,54 @@ def main():
     def stat(snp, hv):
         return interaction_t2(y, geno[snp], hv, cbase, pcs_std)
 
-    # ---- genome-wide lambda vs within-strata permutation null ------------
+    # ---- genome-wide lambda: observed + within-strata permutation null ----
     panel_in = [s for s in panel if s in geno]
+    obs_lambda, null_lambdas = float("nan"), np.array([])
+    if panel_in:
+        obs = np.array([stat(s, hapv) for s in panel_in])
+        obs_lambda = float(np.median(obs) / 0.4549)
+        null_lambdas = np.array(
+            [np.median(np.array([stat(s, permute_within(hapv, mixed_idx, rng))
+                                 for s in panel_in])) / 0.4549
+             for _ in range(a.global_nperm)])
+
+    # ---- per-hit: observed stat + #(null >= obs) over nperm permutations ---
+    hit_rows = []
+    for snp in hits:
+        if snp not in geno:
+            continue
+        o = stat(snp, hapv)
+        n_ge = int(sum(stat(snp, permute_within(hapv, mixed_idx, rng)) >= o
+                       for _ in range(a.nperm)))
+        hit_rows.append({"ID": snp,
+                         "raw_LOG10P": round(float(raw_log10p.get(snp, np.nan)), 4),
+                         "obs_stat": round(o, 4), "n_ge": n_ge, "n_perm": a.nperm,
+                         "forced": snp in forced})
+
+    meta = [("panel_snps", len(panel_in)), ("obs_lambda", "%.6f" % obs_lambda),
+            ("selected_stratum_size", chosen_size),
+            ("within_stratum_HapPC_AUC", "%.4f" % chosen_auc),
+            ("n_mixed_strata", len(mixed_idx)), ("eff_N", eff_n)]
+
+    if a.raw_counts:                                  # one batch -> pool later
+        pd.DataFrame(hit_rows).to_csv(a.out_prefix + "_counts.tsv", sep="\t", index=False)
+        with open(a.out_prefix + "_lambda_null.tsv", "w") as f:
+            for k, v in meta:
+                f.write("%s\t%s\n" % (k, v))
+            f.write("#NULL\n")
+            for v in null_lambdas:
+                f.write("%.6f\n" % v)
+        print("wrote %s_{counts,lambda_null}.tsv (batch seed=%d, nperm=%d)"
+              % (a.out_prefix, a.seed, a.nperm))
+        return
+
+    rows = [{"ID": r["ID"], "raw_LOG10P": r["raw_LOG10P"], "obs_stat": r["obs_stat"],
+             "n_perm": r["n_perm"], "anc_matched_emp_p": (1 + r["n_ge"]) / (1 + r["n_perm"]),
+             "forced": r["forced"]} for r in hit_rows]
+    pd.DataFrame(rows).sort_values("anc_matched_emp_p").to_csv(
+        a.out_prefix + "_interactions.tsv", sep="\t", index=False)
     with open(a.out_prefix + "_lambda.txt", "w") as f:
         if panel_in:
-            obs = np.array([stat(s, hapv) for s in panel_in])
-            obs_lambda = float(np.median(obs) / 0.4549)
-            null_lambdas = []
-            for _ in range(a.global_nperm):
-                hp = permute_within(hapv, mixed_idx, rng)
-                st = np.array([stat(s, hp) for s in panel_in])
-                null_lambdas.append(np.median(st) / 0.4549)
-            null_lambdas = np.array(null_lambdas)
             p = (1 + int((null_lambdas >= obs_lambda).sum())) / (1 + a.global_nperm)
             f.write("panel_snps\t%d\n" % len(panel_in))
             f.write("observed_lambda\t%.4f\n" % obs_lambda)
@@ -297,23 +338,7 @@ def main():
         f.write("within_stratum_HapPC_AUC\t%.4f\n" % chosen_auc)
         f.write("n_mixed_strata\t%d\n" % len(mixed_idx))
         f.write("eff_N\t%d\n" % eff_n)
-
-    # ---- per-hit ancestry-matched empirical p ----------------------------
-    rows = []
-    for snp in hits:
-        if snp not in geno:
-            continue
-        obs = stat(snp, hapv)
-        null = np.array([stat(snp, permute_within(hapv, mixed_idx, rng))
-                         for _ in range(a.nperm)])
-        emp_p = (1 + int((null >= obs).sum())) / (1 + a.nperm)
-        rows.append({"ID": snp, "raw_LOG10P": round(float(raw_log10p.get(snp, np.nan)), 4),
-                     "obs_stat": round(obs, 4), "n_perm": a.nperm,
-                     "anc_matched_emp_p": emp_p,
-                     "forced": snp in forced})
-    out = pd.DataFrame(rows).sort_values("anc_matched_emp_p")
-    out.to_csv(a.out_prefix + "_interactions.tsv", sep="\t", index=False)
-    print("wrote %s_interactions.tsv (%d hits re-tested)" % (a.out_prefix, len(out)))
+    print("wrote %s_interactions.tsv (%d hits re-tested)" % (a.out_prefix, len(rows)))
 
 
 if __name__ == "__main__":

@@ -49,6 +49,32 @@ delete it to start clean.
 The `lava_local` headline (real LAVA R package) is **not** run by the test — R/LAVA isn't in the
 pixi env. Only the pure-Python deconfounding layer (`lava_perm_*`) is exercised.
 
+## Parallelisation checks (`test_parallel.py`)
+
+After the main test (it reuses the data + intermediate results), run:
+
+```bash
+pixi run --manifest-path ./pixi.toml python tests/test_parallel.py
+```
+
+It verifies the two parallelisation features: chromosome-split REGENIE step 2 + `concat_regenie.py`
+reproduces the unsplit scan **exactly**, and pooling K permutation batches with `pool_perm.py`
+reproduces the single-job p-values (and sums the permutation count) for both `perm_interaction`
+and the LAVA local-r_g test.
+
+The synthetic genotypes span **chr 1–22** (~182 variants each), so the data splits across tasks
+out of the box. `tests/env.sh` therefore sets `YS_SPLIT_CHROMS=1-22` and `YS_PERM_BATCHES=4`, so a
+gwf run against the test data (`source tests/env.sh; gwf -b local run`, or `tests/run_via_gwf.sh`)
+fans out into ~104 tasks: one step-2 job per chromosome for `interaction`/`gwas_{I,R}` (+ gathers)
+and four pooled permutation batches each. The whole split pipeline has been verified to complete
+through the real gwf daemon with correct gathered/pooled results. Drop those two env vars to run
+the single-job path. (The in-process `run_pipeline_test.py` does not set them, so it stays
+single-job and fast.)
+
+Note on the gwf **local** backend: a fast-finishing wave of parallel jobs can leave the downstream
+gather in `shouldrun` until the next `gwf run` (Slurm chains this via job dependencies);
+`run_via_gwf.sh` re-submits automatically when the DAG stalls.
+
 ## Notes / environment quirks handled here
 
 - Genotypes are generated as a VCF and imported with `plink2 --id-delim _` so the

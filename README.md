@@ -59,25 +59,57 @@ point `RSCRIPT` at that R, and supply a `LAVA_PARTITION` blocks file; only then 
 
 ## Configure & run
 
-Edit the CONFIG block at the top of `workflow.py` (paths, `ACCOUNT`, `NPC`,
-`CATCOVAR`, `PREV_POP`, `STRATUM_SPECIFIC_STEP1`). To enable the chrX analysis,
-set `XBFILE` (and `GENOME_BUILD`, default `hg38`); leave `XBFILE` empty to skip chrX.
-To enable the LAVA arm, set `LAVA_LOCI` (e.g. `HCN1=5:45300000-45700000`); leave empty
-to skip it.
+The CONFIG block at the top of `workflow.py` **defaults to the bundled synthetic test
+data** (`tests/work/data`) so the workflow runs out of the box once that data is built
+(see the smoke test below); `NPC=10` and `ENV_PREFIX=KMP_AFFINITY=disabled` are set to
+match. **Edit the CONFIG block to point at your real data** (`BFILE`, `PHENO`,
+`BASECOVAR`, `HAPFILE`, `EUR_LD`, `HM3`, `NPC`, `PREV_POP`, `ACCOUNT`, …) and clear
+`ENV_PREFIX` for a real cluster run. To enable the chrX analysis set `XBFILE` (and
+`GENOME_BUILD`, default `hg38`); to enable the LAVA arm set `LAVA_LOCI`
+(e.g. `HCN1=5:45300000-45700000`). Both are empty (skipped) by default.
 
 Any CONFIG value can instead be supplied via a `YS_<NAME>` environment variable (e.g.
-`YS_BFILE`, `YS_NPC`), so you don't have to edit the file on the cluster.
+`YS_BFILE`, `YS_NPC`), so you don't have to edit the file on the cluster. `ENV_PREFIX`
+prepends extra environment to every command — e.g.
+`YS_ENV_PREFIX="KMP_AFFINITY=disabled"` to dodge an MKL/OpenMP thread-affinity assertion
+in some sandboxes/containers; because it's baked into the spec strings it also applies
+under a `gwf` worker whose own environment lacks it.
 
 ```bash
 gwf -f workflow.py status
 gwf -f workflow.py run
 ```
 
+### Parallelising on a cluster (optional)
+
+The strata, arms and LAVA loci already run as independent `gwf` jobs. Two config flags add
+data-subset parallelism (both **on by default**; both leave results unchanged). Set
+`SPLIT_CHROMS=""` and `PERM_BATCHES=1` for the simple one-job-per-scan path.
+
+- **`SPLIT_CHROMS`** (default `"1-22"`; also accepts e.g. `"1,2,5-9"`) — fans the REGENIE step-2
+  scans (`interaction`, `gwas_{I,R}`) into one job per chromosome plus a gather. Step 2 tests
+  variants independently, so the gathered output is **identical** to the single job (verified in
+  `tests/test_parallel.py`).
+- **`PERM_BATCHES`** (default `4`) — splits the Monte-Carlo permutation targets (`perm_interaction`,
+  `lava_perm_*`) into N batches with distinct permutation seeds (selection kept fixed), pooled
+  into the same final result. Linear speedup for large `PERM_NPERM`/`LAVA_NPERM`.
+
+On the synthetic data (chr 1–22, both optional arms on) this fans out to ~104 `gwf` tasks; the
+whole split pipeline is verified to complete with correct gathered/pooled results.
+
+(REGENIE step 1 is a joint fit and doesn't slice by chromosome; use REGENIE's own
+`--split-l0`/`--run-l0`/`--run-l1` if step 1 ever becomes the bottleneck.)
+
 ### Smoke-test the whole pipeline locally (no cluster)
 
 ```bash
 pixi run --manifest-path ./pixi.toml python tests/run_pipeline_test.py
 ```
+
+This runs every target's command in-process. To instead exercise the **real `gwf` local
+backend** (worker daemon + dependency scheduling — a true cluster emulation) against the
+same synthetic data, run `bash tests/run_via_gwf.sh` after the smoke test has built the
+data once. Both have been verified to complete all targets and produce correct results.
 
 Runs every stage on tiny synthetic data and checks a planted SNP×Hap interaction surfaces in
 the scan and that rg / liability-h2 are produced. See `tests/README.md`.
@@ -91,6 +123,9 @@ adds `xqc` → `interaction_X` → `top_int_X` (reusing `step1_full`) and per st
 if `LAVA_PARTITION` is also set, `lava_inputs` → `lava_local` (headline local r_g in R).
 
 ## Reading the results
+
+See **[`OUTPUTS.md`](OUTPUTS.md)** for a full field-by-field guide to every result file (it
+applies to both `results/` and the test's `tests/work/results/`). The key files in brief:
 
 - `results/top_interactions.tsv` — strongest SNP×Hap signals, plus `lambda_GC`
   on the interaction p-values printed to the log. If λ > ~1.10, revisit QC and

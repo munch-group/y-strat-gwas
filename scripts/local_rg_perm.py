@@ -81,6 +81,26 @@ def local_rg(betaI, betaR, R):
     return cov / np.sqrt(vI * vR)
 
 
+def write_local_rg_summary(out_prefix, df, ssize, sauc):
+    """df: one row per locus with local_rg, anc_matched_emp_p, is_target. Writes the
+    _summary.txt (target stats + where it sits among the negative controls). Shared
+    by the single-job path and the batch pooler."""
+    t = df[df.is_target].iloc[0]
+    ctrl = df[~df.is_target]
+    tail = (1 + int((ctrl.local_rg.abs() >= abs(t.local_rg)).sum())) / (1 + len(ctrl))
+    nan = float("nan")
+    with open(out_prefix + "_summary.txt", "w") as f:
+        f.write("target_locus\t%s\n" % t.locus)
+        f.write("target_local_rg\t%.4f\n" % t.local_rg)
+        f.write("target_anc_matched_p\t%.4g\n" % t.anc_matched_emp_p)
+        f.write("n_controls\t%d\n" % len(ctrl))
+        f.write("target_vs_controls_tail_frac\t%.4g\n" % tail)
+        f.write("control_local_rg_mean\t%.4f\n" % (ctrl.local_rg.mean() if len(ctrl) else nan))
+        f.write("control_p_median\t%.4f\n" % (ctrl.anc_matched_emp_p.median() if len(ctrl) else nan))
+        f.write("strata_mean_size\t%d\n" % ssize)
+        f.write("within_stratum_HapPC_AUC\t%.4f\n" % sauc)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bfile", required=True)
@@ -96,10 +116,15 @@ def main():
     ap.add_argument("--nperm", type=int, default=10000)
     ap.add_argument("--strata-sizes", default="20,40,80,160")
     ap.add_argument("--strata-auc", type=float, default=0.55)
-    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--seed", type=int, default=1, help="permutation seed (vary per batch)")
+    ap.add_argument("--select-seed", type=int, default=1,
+                    help="control-block selection seed; keep FIXED across batches so they pool")
+    ap.add_argument("--raw-counts", action="store_true",
+                    help="emit poolable per-batch raw counts instead of final p-values")
     ap.add_argument("--out-prefix", required=True)
     a = ap.parse_args()
-    rng = np.random.default_rng(a.seed)
+    rng = np.random.default_rng(a.seed)            # permutations (batch-specific)
+    sel_rng = np.random.default_rng(a.select_seed)  # control selection (fixed across batches)
 
     # ---- align samples on the .fam order ---------------------------------
     fid, iid = amp.read_fam(a.bfile + ".fam")
@@ -147,15 +172,13 @@ def main():
           % (ssize, sauc, eff_n))
 
     def block_stat_perm(idx):
-        """Return (T_obs, emp_p, n_snps) for a block given by .bim row indices."""
+        """Return (T_obs, n_ge, n_snps): n_ge = #perms with |T| >= |T_obs|."""
         G = amp.read_bed(a.bfile + ".bed", n, list(idx))[keep_rows]
         sd = G.std(0)
         sd[sd == 0] = 1.0
         Z = (G - G.mean(0)) / sd
         Zr = Z - P @ Z                                 # PC-residualised genotypes
         R = (Zr.T @ Zr) / len(y)                       # LD-aware weighting
-        denom = (Zr * Zr).sum(0)
-        denom[denom == 0] = 1.0
 
         def stat(hv):
             mI, mR = hv == 1, hv == 0
@@ -164,47 +187,42 @@ def main():
             return local_rg(bI, bR, R)
 
         t_obs = stat(hapv)
-        null = np.array([stat(amp.permute_within(hapv, mixed_idx, rng))
-                         for _ in range(a.nperm)])
-        emp_p = (1 + int((np.abs(null) >= abs(t_obs)).sum())) / (1 + a.nperm)
-        return t_obs, emp_p, len(idx)
+        n_ge = int(sum(abs(stat(amp.permute_within(hapv, mixed_idx, rng))) >= abs(t_obs)
+                       for _ in range(a.nperm)))
+        return t_obs, n_ge, len(idx)
 
-    # ---- target locus ----------------------------------------------------
+    # ---- target locus + negative-control panel (controls fixed per batch) -
     tchrom, lo, hi = parse_locus(a.locus)
     tidx = block_indices(chrom_arr, pos_arr, tchrom, lo, hi)
     if len(tidx) < 3:
         raise SystemExit("target locus has <3 SNPs (%d)" % len(tidx))
-    t_obs, t_p, t_m = block_stat_perm(tidx)
-    print("TARGET %s (%s, %d SNPs): local_rg=%.3f  anc_matched_p=%.4g"
-          % (a.locus_name, a.locus, t_m, t_obs, t_p))
+    blocks = [(a.locus_name, tchrom, tidx, True)]
+    for bi, idx in enumerate(sample_control_blocks(chrom_arr, pos_arr, tidx, len(tidx),
+                                                    a.n_controls, tchrom, sel_rng)):
+        blocks.append(("control_%d" % bi, chrom_arr[idx[0]], idx, False))
 
-    # ---- negative-control panel -----------------------------------------
-    rows = [{"locus": a.locus_name, "chr": tchrom, "n_snps": t_m,
-             "local_rg": round(t_obs, 4), "anc_matched_emp_p": t_p, "is_target": True}]
-    ctrls = sample_control_blocks(chrom_arr, pos_arr, tidx, t_m, a.n_controls,
-                                  tchrom, rng)
-    for bi, idx in enumerate(ctrls):
-        to, tp, tm = block_stat_perm(idx)
-        rows.append({"locus": "control_%d" % bi, "chr": chrom_arr[idx[0]],
-                     "n_snps": tm, "local_rg": round(to, 4),
-                     "anc_matched_emp_p": tp, "is_target": False})
-    out = pd.DataFrame(rows)
-    out.to_csv(a.out_prefix + "_loci.tsv", sep="\t", index=False)
+    rows = []
+    for name, ch, idx, is_t in blocks:
+        to, n_ge, m = block_stat_perm(idx)
+        rows.append({"locus": name, "chr": ch, "n_snps": m,
+                     "local_rg": round(to, 4), "n_ge": n_ge, "n_perm": a.nperm,
+                     "is_target": is_t})
+    df_rows = pd.DataFrame(rows)
 
-    ctrl = out[~out.is_target]
-    tail = (1 + int((ctrl.local_rg.abs() >= abs(t_obs)).sum())) / (1 + len(ctrl))
-    with open(a.out_prefix + "_summary.txt", "w") as f:
-        f.write("target_locus\t%s\n" % a.locus_name)
-        f.write("target_local_rg\t%.4f\n" % t_obs)
-        f.write("target_anc_matched_p\t%.4g\n" % t_p)
-        f.write("n_controls\t%d\n" % len(ctrl))
-        f.write("target_vs_controls_tail_frac\t%.4g\n" % tail)
-        f.write("control_local_rg_mean\t%.4f\n" % ctrl.local_rg.mean())
-        f.write("control_p_median\t%.4f\n" % ctrl.anc_matched_emp_p.median())
-        f.write("strata_mean_size\t%d\n" % ssize)
-        f.write("within_stratum_HapPC_AUC\t%.4f\n" % sauc)
-    print("wrote %s_loci.tsv  (target tail-fraction vs controls: %.4g)"
-          % (a.out_prefix, tail))
+    if a.raw_counts:                                  # one batch -> pool later
+        df_rows.to_csv(a.out_prefix + "_counts.tsv", sep="\t", index=False)
+        with open(a.out_prefix + "_meta.tsv", "w") as f:
+            f.write("strata_mean_size\t%d\n" % ssize)
+            f.write("within_stratum_HapPC_AUC\t%.4f\n" % sauc)
+        print("wrote %s_counts.tsv (batch seed=%d, nperm=%d)"
+              % (a.out_prefix, a.seed, a.nperm))
+        return
+
+    df_rows["anc_matched_emp_p"] = (1 + df_rows.n_ge) / (1 + df_rows.n_perm)
+    df_rows[["locus", "chr", "n_snps", "local_rg", "anc_matched_emp_p",
+             "is_target"]].to_csv(a.out_prefix + "_loci.tsv", sep="\t", index=False)
+    write_local_rg_summary(a.out_prefix, df_rows, ssize, sauc)
+    print("wrote %s_loci.tsv" % a.out_prefix)
 
 
 if __name__ == "__main__":

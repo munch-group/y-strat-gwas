@@ -10,7 +10,8 @@ The deliverable is `workflow.py` plus the helper scripts it invokes, executed on
 Slurm cluster. `tests/` holds a self-contained local smoke test (synthetic data, no Slurm).
 
 `METHODS.md` is the standalone conceptual guide (the statistics and *why* the pipeline is built
-this way) — read it for the theory; this file is the operational map. The single most important
+this way) — read it for the theory; `OUTPUTS.md` is the field-by-field guide to the result files
+in `results/` (and `tests/work/results/`); this file is the operational map. The single most important
 domain fact (see `METHODS.md`, `notes.md`, README caveat 1): haplogroup I vs R is
 **not exogenous** — it tags deep autosomal ancestry (R carries more Steppe-related ancestry).
 Every design choice exists to separate genuine epistasis from this ancestry confounding. When
@@ -88,8 +89,14 @@ LDSC reference data must be downloaded separately and pointed at via `workflow.p
 All paths and parameters live in the **CONFIG block at the top of `workflow.py`**
 (`ACCOUNT`, `BFILE`, `PHENO`, `BASECOVAR`, `HAPFILE`, `NPC`, `CATCOVAR`, `LDSC_DIR`, `EUR_LD`,
 `HM3`, `PREV_POP`, `STRATUM_SPECIFIC_STEP1`, `XBFILE`/`GENOME_BUILD` for chrX, `PERM_*` for the
-permutation re-test, and `LAVA_*`/`RSCRIPT` for the LAVA arm). These ship as `/path/to/...`
-placeholders (`XBFILE` and `LAVA_LOCI` default empty = those arms skipped). Each can
+permutation re-test, `LAVA_*`/`RSCRIPT` for the LAVA arm, `ENV_PREFIX` to prepend extra env to
+every command — e.g. `YS_ENV_PREFIX="KMP_AFFINITY=disabled"`, baked into the spec strings so it
+survives a `gwf` worker whose own env lacks it — and `SPLIT_CHROMS`/`PERM_BATCHES` for
+parallelisation, below). The path/param defaults **point at the
+bundled synthetic test data** (`tests/work/data`, after `tests/run_pipeline_test.py` has built
+it) so `gwf run` works out of the box — `NPC=10` and `ENV_PREFIX=KMP_AFFINITY=disabled` are set
+to match; `XBFILE`/`LAVA_LOCI` default empty (those arms skipped, with the synthetic values noted
+inline). Replace each with real data for a cluster run (and clear `ENV_PREFIX`). Each can
 be **edited in place or overridden via a `YS_<NAME>` environment variable** (e.g. `YS_BFILE`,
 `YS_NPC`, `YS_OUT`) — the env path is what the test harness uses, and it avoids editing the file
 on the cluster.
@@ -101,6 +108,17 @@ gwf -f workflow.py run
 
 Outputs land in `results/`; REGENIE step-1 lowmem scratch in `tmp/`. Key results:
 `results/top_interactions.tsv`, `results/I_vs_R_rg.log`, `results/h2_{I,R}.log`.
+
+**Parallelisation (on by default; set `SPLIT_CHROMS=""`, `PERM_BATCHES=1` for the single-job
+path).** `SPLIT_CHROMS` (default `"1-22"`) fans the REGENIE step-2 scans (`interaction`,
+`gwas_{I,R}`) into one job per chromosome + a `concat_regenie.py` gather — step 2 tests variants
+independently, so the gathered result is **identical** to the single job. `PERM_BATCHES` (default
+4) splits the Monte-Carlo targets (`perm_interaction`, `lava_perm_*`) into N independent batches
+(fixed selection seed, distinct permutation seeds) pooled by `pool_perm.py` (sum `n_ge`/`n_perm`;
+concat null-λ samples). The in-process `run_pipeline_test.py` pins both off (it runs targets in a
+fixed order); the split path is covered by `tests/test_parallel.py` + `tests/run_via_gwf.sh`. Step 1
+resists naive splitting (joint fit) — use REGENIE's own `--split-l0`/`--run-l0`/`--run-l1` if it
+ever becomes the bottleneck.
 
 The helper scripts live in `scripts/` and `workflow.py` invokes them as `{ROOT}/scripts/<name>.py`.
 
@@ -118,6 +136,8 @@ The helper scripts live in `scripts/` and `workflow.py` invokes them as `{ROOT}/
 | `local_rg_perm.py` | LAVA local-r_g deconfounding: ancestry-matched permutation + negative-control loci (imports `ancestry_matched_perm`) |
 | `lava_inputs.py` | build LAVA input.info / sample-overlap / locus files from the per-stratum sumstats |
 | `lava_local.R` | headline bivariate local r_g via the LAVA R package (run outside the pixi env) |
+| `concat_regenie.py` | gather chromosome-split REGENIE step-2 chunks into one file (header once) |
+| `pool_perm.py` | pool permutation-batch raw counts → final p-values (interaction or LAVA) |
 
 `top_interactions.py --test` defaults to `ADD-INT_SNPxHap`; **verify the exact TEST label in
 your REGENIE output header** — it varies by version, and a mismatch makes the script exit empty.
@@ -137,7 +157,14 @@ layer separates them (genuine survives and beats controls; confound collapses). 
 synthetic chrX fileset (all-male, hemizygous) and checks the planted **chrX** interaction surfaces
 from the hemizygous step-2 pass. The `lava_local` R step is **not** exercised (no R here). Scratch goes to
 `tests/work/` (git-ignored). See `tests/README.md`. Use this to smoke-test any change to
-`workflow.py` or the helpers before a cluster run.
+`workflow.py` or the helpers before a cluster run. `tests/test_parallel.py` (run after the main
+test) checks the two parallelisation features: chromosome-split step 2 + concat reproduces the
+unsplit scan **exactly**, and pooling permutation batches reproduces the single-job p-values.
+`tests/run_via_gwf.sh` runs the same data
+through the **real `gwf` local backend** (worker daemon) as a true cluster emulation — both paths
+are verified to complete all targets with correct results. The local backend needs
+`KMP_AFFINITY=disabled` to reach REGENIE's workers: pass it via `YS_ENV_PREFIX` (baked into specs)
+rather than relying on the worker's environment.
 
 The vendored `./ldsc` fork needed small patches to run under modern pandas/numpy (all genuine
 py2→py3 / pandas-2 / numpy-2 breakages that bite real runs, found via the test):

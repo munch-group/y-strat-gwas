@@ -119,6 +119,11 @@ def run_workflow_targets():
         # environments; disabling it is harmless and unrelated to the pipeline.
         "KMP_AFFINITY": "disabled",
         "OMP_PROC_BIND": "FALSE",
+        # This in-process smoke test executes targets in a fixed order, so pin the
+        # single-job path regardless of the workflow's split defaults (the split /
+        # batch fan-out is covered by tests/test_parallel.py + tests/run_via_gwf.sh).
+        "YS_SPLIT_CHROMS": "",
+        "YS_PERM_BATCHES": "1",
     }
     os.environ.update(env)
     sys.path.insert(0, ROOT)
