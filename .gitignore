@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# GxHaplogroup pipeline outputs / local test scratch
+results/
+tmp/
+tests/work/
