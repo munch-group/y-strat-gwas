@@ -26,7 +26,7 @@ from gwf import Workflow
 def _env(name, default):
     return os.environ.get("YS_" + name, default)
 
-ACCOUNT   = _env("ACCOUNT", None)   # slurm account
+ACCOUNT   = _env("xy-brain", None)   # slurm account
 ROOT      = os.path.dirname(os.path.abspath(__file__))
 
 # Defaults below point at the bundled SYNTHETIC TEST DATA (tests/work/data) so the
@@ -169,34 +169,34 @@ PHENO_VALUE_COL  = int(_env("PHENO_VALUE_COL", "3"))
 # RAW_COVAR (the prep tasks fix their format) rather than PHENO / BASECOVAR.
 # Each value can also be set from the shell via its YS_* env var instead.
 # =============================================================================
-# ACCOUNT    = "ChrXh2"          # your slurm account (was None -> no account)
-# ENV_PREFIX = ""                # clear the synthetic-data sandbox KMP_AFFINITY flag
-# _DATA = "/faststorage/jail/project/ChrXh2/data"
-# _HAP  = "/faststorage/jail/project/ChrXh2/shannon/y_haplo/results"
-#
-# # --- autosomes (males; non-I/R males dropped everywhere via keep_IR) ---------
-# # NB: plink/REGENIE read <prefix>.bed/.bim/.fam for this prefix. If your files
-# # are named .bam/.bin, symlink them to .bed/.bim first.
-# BFILE   = "%s/chrX/autosomes/iPSYCH2015_HRC_2020-merge.hg19.ch.fl.bgn" % _DATA
-# HAPFILE = "%s/haplogroup_combined_haplogroup_assignments.txt" % _HAP
-# HAPCOL  = "Major"              # haplogroup in col 6, named "Major"; FID/IID in cols 1-2
-# NPC     = 10
-#
-# # --- phenotype: headerless PLINK .pheno, value in col 3, 2=case / 1=control --
-# RAW_PHENO     = "%s/pheno/asdGWAS2015.pheno" % _DATA
-# PHENO_CASE    = "2"
-# PHENO_CONTROL = "1"            # PHENO_HAS_HEADER stays False (value = PHENO_VALUE_COL=3)
-#
-# # --- covariates: plink MDS cov "FID IID SOL C1..C10 st1" (has a header) -------
-# RAW_COVAR   = "%s/pca/ASD2015_pca2_ell_dk-dim3_8_8_8.menv.mds_cov" % _DATA
-# PC_PREFIX   = "C"              # rename C1..C10 -> PC1..PC10
-# EXTRA_COVAR = "age"            # not in the raw file -> added as a dummy (or "" to drop)
-# CATCOVAR    = "batch"          # not in the raw file -> added as a dummy (or "" to drop)
-#
+ACCOUNT    = "ChrXh2"          # your slurm account (was None -> no account)
+ENV_PREFIX = ""                # clear the synthetic-data sandbox KMP_AFFINITY flag
+_DATA = "/faststorage/jail/project/ChrXh2/data"
+_HAP  = "/faststorage/jail/project/ChrXh2/shannon/y_haplo/results"
+
+# --- autosomes (males; non-I/R males dropped everywhere via keep_IR) ---------
+# NB: plink/REGENIE read <prefix>.bed/.bim/.fam for this prefix. If your files
+# are named .bam/.bin, symlink them to .bed/.bim first.
+BFILE   = "%s/autosomes/iPSYCH2015_HRC_2020-merge.hg19.ch.fl.bgn" % _DATA
+HAPFILE = "%s/haplogroup_combined_haplogroup_assignments.txt" % _HAP
+HAPCOL  = "Major"              # haplogroup in col 6, named "Major"; FID/IID in cols 1-2
+NPC     = 10
+
+# --- phenotype: headerless PLINK .pheno, value in col 3, 2=case / 1=control --
+RAW_PHENO     = "%s/pheno/asdGWAS2015.pheno" % _DATA
+PHENO_CASE    = "2"
+PHENO_CONTROL = "1"            # PHENO_HAS_HEADER stays False (value = PHENO_VALUE_COL=3)
+
+# --- covariates: plink MDS cov "FID IID SOL C1..C10 st1" (has a header) -------
+RAW_COVAR   = "%s/pca/ASD2015_pca2_ell_dk-dim3_8_8_8.menv.mds_cov" % _DATA
+PC_PREFIX   = "C"              # rename C1..C10 -> PC1..PC10
+EXTRA_COVAR = "age"            # not in the raw file -> added as a dummy (or "" to drop)
+CATCOVAR    = "batch"          # not in the raw file -> added as a dummy (or "" to drop)
+
 # # --- chrX (hemizygous males, build hg19) -------------------------------------
-# XBFILE       = "%s/chrX/M/iPSYCH2015_HRC_ChrX_M_2020-merge.hg19.ch.fl.bgn" % _DATA
-# GENOME_BUILD = "hg19"
-#
+XBFILE       = "%s/chrX/M/iPSYCH2015_HRC_ChrX_M_2020-merge.hg19.ch.fl.bgn" % _DATA
+GENOME_BUILD = "hg19"
+
 # # --- females negative control (set FBFILE="" to skip the arm) ----------------
 # # FBFILE may be the shared autosome fileset: females are picked out by the
 # # FEMALE-ONLY pheno/covar below (males in the fileset fall out of the sample
@@ -204,6 +204,7 @@ PHENO_VALUE_COL  = int(_env("PHENO_VALUE_COL", "3"))
 # # males (restrict the joint .mds_cov to females -- it already is the joint
 # # autosomal PCA). RAW_FPHENO is the headerless female .pheno (same 2/1 coding).
 # FBFILE     = BFILE
+FBFILE     = ""
 # RAW_FPHENO = "%s/pheno/asdGWAS2015_females.pheno" % _DATA
 # RAW_FCOVAR = "<female-only .mds_cov in the male PC space>"   # restrict the joint mds_cov to females
 
