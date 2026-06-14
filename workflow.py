@@ -488,7 +488,7 @@ for s in ("I", "R"):
     gwf.target("munge_%s" % s,
                inputs=["%s/gwas_%s_%s.regenie" % (OUT, s, PHENONAME)],
                outputs=["%s/munged_%s.sumstats.gz" % (OUT, s)],
-               cores=2, memory="8g", walltime="01:00:00") << """
+               cores=2, memory="24g", walltime="01:00:00") << """
 {pixi} python {root}/scripts/regenie_to_munge.py \
   --regenie {out}/gwas_{s}_{ph}.regenie --out {out}/gwas_{s}.forldsc.txt
 {ldsc} {ldscdir}/munge_sumstats.py \
