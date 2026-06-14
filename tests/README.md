@@ -22,6 +22,9 @@ delete it to start clean.
      interaction) — all recorded in `truth.txt`.
    - **Two LD blocks for the LAVA arm**: a *genuine* local divergence (chr20, effects flip sign
      by Hap) and a *confound* one (chr21, effects modulated by ancestry) — also in `truth.txt`.
+   - A **female cohort** (no Y, same SNP IDs as the males) whose phenotype keeps the confound
+     SNP's g×ancestry effect but has *no* Hap interaction — so the negative control should flag
+     the confound (reproduces in females) but not the real interaction.
    - A separate **chrX fileset** (`genoX.vcf` + `sex.txt`): all-male, hemizygous genotypes
      (dosage 0/2) at non-PAR positions, so REGENIE applies male hemizygous coding.
    - Matching `phenotypes.txt`, `covariates_base.txt`, `haplogroup.txt`, a HapMap3-style
@@ -44,7 +47,10 @@ delete it to start clean.
    - the **LAVA** local-r_g permutation separates the genuine local divergence (survives, low
      `anc_matched_emp_p`, in the tail of the negative-control loci) from the confound block
      (collapses) — the deconfounding check for the local-r_g arm,
-   - per-stratum **chrX** summary stats (`gwas_X_{I,R}.forldsc.txt`) are emitted.
+   - per-stratum **chrX** summary stats (`gwas_X_{I,R}.forldsc.txt`) are emitted,
+   - the **females negative control** flags the confound SNP (reproduces in a no-Y group) but not
+     the genuine interaction SNP,
+   - the **pooled vs stratified** and **per-chromosome** h2 tables are produced.
 
 The `lava_local` headline (real LAVA R package) is **not** run by the test — R/LAVA isn't in the
 pixi env. Only the pure-Python deconfounding layer (`lava_perm_*`) is exercised.

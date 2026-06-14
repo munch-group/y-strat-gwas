@@ -28,6 +28,7 @@ Y-haplogroup **I** and **R**:
 | `covariates_base.txt` | `FID IID PC1 … PCk age batch …` |
 | `haplogroup.txt` | `FID IID Hap` — `Hap` = `I` or `R` |
 | `genotypesX.{bed,bim,fam}` | *(optional)* plink1 chrX (chromosome coded 23/X), **SEX filled in the `.fam`** (1=male) |
+| `females.{bed,bim,fam}` + covars | *(`FBFILE`, on by default)* female plink1 (same SNP IDs as the males) + female PCs in the **same PC space** as the males (negative control) |
 
 `Hap` is coded internally as I=1, R=0. The optional chrX fileset (`XBFILE`) is analysed in
 its own REGENIE step-2 pass — REGENIE codes non-PAR males hemizygously (0/2) from the `.fam`
@@ -66,7 +67,10 @@ match. **Edit the CONFIG block to point at your real data** (`BFILE`, `PHENO`,
 `BASECOVAR`, `HAPFILE`, `EUR_LD`, `HM3`, `NPC`, `PREV_POP`, `ACCOUNT`, …) and clear
 `ENV_PREFIX` for a real cluster run. To enable the chrX analysis set `XBFILE` (and
 `GENOME_BUILD`, default `hg38`); to enable the LAVA arm set `LAVA_LOCI`
-(e.g. `HCN1=5:45300000-45700000`). Both are empty (skipped) by default.
+(e.g. `HCN1=5:45300000-45700000`); `XBFILE`/`LAVA_LOCI` are empty (skipped) by default. The
+females negative control runs **by default** (`FBFILE`/`FPHENO`/`FBASECOVAR` default to the
+synthetic female data, like the male inputs — swap them for your real female files, with the
+female PCs in the same PC space as the males; set `FBFILE=""` to skip the arm).
 
 Any CONFIG value can instead be supplied via a `YS_<NAME>` environment variable (e.g.
 `YS_BFILE`, `YS_NPC`), so you don't have to edit the file on the cluster. `ENV_PREFIX`
@@ -138,7 +142,12 @@ applies to both `results/` and the test's `tests/work/results/`). The key files 
   genome-wide interaction λ vs the permutation null, and
   `results/perm_strata_selection.tsv` the strata-granularity choice (see caveat 1).
 - `results/I_vs_R_rg.log` — the cross-stratum r_g (parsed to stdout by `rg`).
-- `results/h2_{I,R}.log` — per-stratum SNP-h2.
+- `results/h2_{I,R}.log` — per-stratum SNP-h2; `results/h2_full.log` — pooled (non-stratified)
+  SNP-h2. `results/h2_by_stratification.tsv` tabulates pooled vs I vs R, and
+  `results/h2_by_chromosome.tsv` gives per-chromosome h2 (chrX vs autosomes, with an X LD ref).
+- `results/female_negative_control.tsv` — *(with `FBFILE`)* each male interaction hit re-tested in
+  females (no Y): `looks_like_ancestry_artifact = True` ⇒ the hit reproduces in a no-Y group ⇒ it's
+  ancestry, not Y. A null is only *consistent* with Y-causation (autism is sex-differential).
 - `results/lava_<name>_summary.txt` + `_loci.tsv` — per-locus **local** cross-stratum
   r_g with its **ancestry-matched** empirical p and its position in the negative-control
   distribution (`target_vs_controls_tail_frac` — small ⇒ stands out from controls). The

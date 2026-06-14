@@ -31,6 +31,7 @@ import numpy as np
 N_PER_GROUP = 1000          # samples per haplogroup (I, R)
 N_SNP       = 4000          # total autosomal variants, spread across chr 1..22
 N_XSNP      = 300           # chrX variants (non-PAR, male hemizygous)
+N_FEMALES   = 1500          # females (negative control; no Y, same autosomal SNPs)
 NPC         = 10            # PCs written to the covariate file
 SEED        = 12345
 # chrX non-PAR window (hg38): between PAR1 end (2,781,479) and PAR2 start
@@ -217,6 +218,53 @@ def main():
 
     write_ldsc_reference(ref_dir, G, chrom, bp, snp_ids)
 
+    # ---- females: negative control for the ancestry artefact -------------
+    # Same SNPs as the males (so male hits are look-up-able), spanning the same
+    # ancestry gradient, but NO Y -> NO real SNP x Hap interaction. The CONFOUND
+    # SNP keeps its g x ancestry effect, so splitting females by the male I/R
+    # ancestry propensity should reproduce the confound's "interaction" (artefact)
+    # while the genuine interaction SNP stays null.
+    nf = N_FEMALES
+    f_anc = rng.normal(0.0, 1.0, size=nf)
+    f_pcs = rng.normal(size=(nf, NPC))
+    f_pcs[:, 0] = f_anc + rng.normal(scale=0.3, size=nf)
+    f_age = rng.integers(18, 65, size=nf).astype(float)
+    f_batch = rng.integers(0, 2, size=nf)
+    Gf = np.empty((nf, N_SNP), dtype=np.int8)
+    for j in range(N_SNP):
+        p = np.clip(base_maf[j] + anc_load[j] * f_anc, 0.01, 0.99)
+        Gf[:, j] = rng.binomial(2, p)
+    f_logit = (-0.2
+               + 0.30 * Gf[:, main_idx].sum(axis=1) / np.sqrt(5)
+               + 0.55 * Gf[:, conf_idx] * f_anc      # confound reproduces (g x ancestry)
+               + 0.15 * f_anc)                       # no Hap interaction (no Y)
+    f_logit -= f_logit.mean()
+    f_prob = 1.0 / (1.0 + np.exp(-f_logit))
+    f_autism = (rng.uniform(size=nf) < f_prob).astype(int)
+    f_fid = ["FFID%d" % i for i in range(nf)]
+    f_iid = ["FIID%d" % i for i in range(nf)]
+
+    fvcf = os.path.join(a.out_dir, "females.vcf")
+    with open(fvcf, "w") as f:
+        f.write("##fileformat=VCFv4.2\n")
+        for c in range(1, 23):
+            f.write("##contig=<ID=%d>\n" % c)
+        f.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="GT">\n')
+        f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t"
+                + "\t".join("%s_%s" % (f_fid[i], f_iid[i]) for i in range(nf)) + "\n")
+        for j in np.lexsort((bp, chrom)):
+            gts = "\t".join(code[int(g)] for g in Gf[:, j])
+            f.write("%d\t%d\t%s\tA\tG\t.\tPASS\t.\tGT\t%s\n"
+                    % (chrom[j], bp[j], snp_ids[j], gts))
+    write_table(os.path.join(a.out_dir, "female_phenotypes.txt"),
+                "FID IID autism".replace(" ", "\t"),
+                [(f_fid[i], f_iid[i], int(f_autism[i])) for i in range(nf)])
+    write_table(os.path.join(a.out_dir, "female_covariates_base.txt"),
+                "\t".join(["FID", "IID"] + pc_names + ["age", "batch"]),
+                [tuple([f_fid[i], f_iid[i]]
+                       + ["%.5f" % f_pcs[i, k] for k in range(NPC)]
+                       + [int(f_age[i]), int(f_batch[i])]) for i in range(nf)])
+
     with open(os.path.join(a.out_dir, "truth.txt"), "w") as f:
         f.write("interaction_snp\t%s\n" % snp_ids[int_idx])
         f.write("maineffect_snps\t%s\n" % ",".join(snp_ids[k] for k in sorted(main_idx)))
@@ -235,6 +283,7 @@ def main():
     print("  LDSC reference dir  : %s" % ref_dir)
     print("  TRUE_X_INTERACTION  : %s  (chrX, hemizygous)" % x_ids[x_int_idx])
     print("  CONFOUND_SNP        : %s  (g x ancestry, no g x Hap)" % snp_ids[conf_idx])
+    print("  females (neg ctrl)  : %d  (no Y; confound reproduces, real does not)" % N_FEMALES)
     print("  TRUE_INTERACTION_SNP: %s  (chr%d)" % (snp_ids[int_idx], chrom[int_idx]))
     print("  TRUE_MAINEFFECT_SNPs: %s" % ",".join(snp_ids[k] for k in sorted(main_idx)))
 

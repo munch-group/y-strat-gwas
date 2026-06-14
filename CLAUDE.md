@@ -30,6 +30,10 @@ editing, preserve those guards rather than "simplifying" them away:
   main-effect GWAS within each stratum, munged to LDSC format, then cross-stratum genetic
   correlation. **r_g significantly < 1 ⇒ pervasive G × haplogroup interaction** — the
   well-powered readout. Arm B optionally runs a stratum-specific step-1 (`STRATUM_SPECIFIC_STEP1`).
+  Heritability extras (default on, flags `H2_POOLED`/`H2_PER_CHR`): a pooled full-sample GWAS
+  (`gwas_full`) gives a non-stratified `h2_full` tabulated against `h2_{I,R}`
+  (`h2_by_stratification.tsv`), and per-chromosome LDSC on the pooled sumstats gives
+  `h2_by_chromosome.tsv` (chrX included only with an X LD reference, `EUR_LD_X`+`HM3_X`).
 
 Coding convention enforced across all helpers: **Hap is I=1, R=0**. `ALLELE1`/`ALLELE0` are
 REGENIE's effect/non-effect alleles; REGENIE reports `LOG10P`, not `P` (helpers convert).
@@ -52,6 +56,14 @@ REGENIE's effect/non-effect alleles; REGENIE reports `LOG10P`, not `P` (helpers 
   and a **negative-control-loci panel** (a focused locus is only interesting if it's in the tail
   of matched control blocks, since residual structure depresses local r_g everywhere). Same
   global-PC ceiling — local ancestry survives.
+- **Females negative control** (on by default — `FBFILE`/`FPHENO`/`FBASECOVAR` point at the
+  synthetic female data like the male inputs; set `FBFILE=""` to skip): females carry no Y, so a
+  real Y-haplogroup interaction can't exist in them. `assign_pseudo_hap.py` splits females along
+  the male I-vs-R ancestry propensity (pseudo-Hap), then `female_negcontrol.py` re-tests each male
+  interaction hit for SNP×pseudo-Hap in females → `female_negative_control.tsv`. **A hit that
+  reproduces in females is an ancestry artefact** (strong, direct); a null is only *consistent*
+  with Y-causation (autism is sex-differential). Use females this way — **not** as a third
+  symmetric stratum (sex would dominate). Needs female PCs in the male PC space (`FBASECOVAR`).
 - **chrX** (optional, only when `XBFILE` is set): both arms get a chrX step-2 pass reusing the
   autosomal step-1 predictors, with non-PAR males coded **hemizygously (0/2)** by REGENIE from
   the `.fam` sex column + `--par-region <build>` (`--sex-specific male`). Targets:
@@ -89,7 +101,9 @@ LDSC reference data must be downloaded separately and pointed at via `workflow.p
 All paths and parameters live in the **CONFIG block at the top of `workflow.py`**
 (`ACCOUNT`, `BFILE`, `PHENO`, `BASECOVAR`, `HAPFILE`, `NPC`, `CATCOVAR`, `LDSC_DIR`, `EUR_LD`,
 `HM3`, `PREV_POP`, `STRATUM_SPECIFIC_STEP1`, `XBFILE`/`GENOME_BUILD` for chrX, `PERM_*` for the
-permutation re-test, `LAVA_*`/`RSCRIPT` for the LAVA arm, `ENV_PREFIX` to prepend extra env to
+permutation re-test, `LAVA_*`/`RSCRIPT` for the LAVA arm, `H2_POOLED`/`H2_PER_CHR`(+`EUR_LD_X`/`HM3_X`)
+for the heritability extras, `FBFILE`/`FPHENO`/`FBASECOVAR` for the females negative control,
+`ENV_PREFIX` to prepend extra env to
 every command — e.g. `YS_ENV_PREFIX="KMP_AFFINITY=disabled"`, baked into the spec strings so it
 survives a `gwf` worker whose own env lacks it — and `SPLIT_CHROMS`/`PERM_BATCHES` for
 parallelisation, below). The path/param defaults **point at the
@@ -138,6 +152,9 @@ The helper scripts live in `scripts/` and `workflow.py` invokes them as `{ROOT}/
 | `lava_local.R` | headline bivariate local r_g via the LAVA R package (run outside the pixi env) |
 | `concat_regenie.py` | gather chromosome-split REGENIE step-2 chunks into one file (header once) |
 | `pool_perm.py` | pool permutation-batch raw counts → final p-values (interaction or LAVA) |
+| `collect_h2.py` | parse LDSC `--h2` logs → one table (pooled-vs-stratified, or per-chromosome) |
+| `assign_pseudo_hap.py` | split females by the male I-vs-R ancestry propensity → female pseudo-Hap |
+| `female_negcontrol.py` | re-test male interaction hits for SNP×pseudo-Hap in females (artefact check) |
 
 `top_interactions.py --test` defaults to `ADD-INT_SNPxHap`; **verify the exact TEST label in
 your REGENIE output header** — it varies by version, and a mismatch makes the script exit empty.
@@ -155,7 +172,8 @@ plants two LD blocks — a **genuine** local divergence (effects sign-flip by Ha
 one (effects modulated by ancestry) — and the test asserts the LAVA permutation + negative-control
 layer separates them (genuine survives and beats controls; confound collapses). It also builds a
 synthetic chrX fileset (all-male, hemizygous) and checks the planted **chrX** interaction surfaces
-from the hemizygous step-2 pass. The `lava_local` R step is **not** exercised (no R here). Scratch goes to
+from the hemizygous step-2 pass. It builds a synthetic **female** cohort (no Y, same SNPs) and
+asserts the negative control flags the confound SNP (reproduces in females) but not the real one. The `lava_local` R step is **not** exercised (no R here). Scratch goes to
 `tests/work/` (git-ignored). See `tests/README.md`. Use this to smoke-test any change to
 `workflow.py` or the helpers before a cluster run. `tests/test_parallel.py` (run after the main
 test) checks the two parallelisation features: chromosome-split step 2 + concat reproduces the

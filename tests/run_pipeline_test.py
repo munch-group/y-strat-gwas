@@ -76,6 +76,10 @@ def build_inputs():
        "--update-sex %s/sex.txt --make-bed "
        "--out %s/genotypesX" % (PIXI, DATA, DATA, DATA))
 
+    # 2c. females (negative control): same SNPs as the males, no Y.
+    sh("%s plink2 --vcf %s/females.vcf --id-delim _ --make-bed --max-alleles 2 "
+       "--out %s/females" % (PIXI, DATA, DATA))
+
     # 3. HapMap3-style merge-alleles list = every SNP in the panel (SNP A1 A2)
     bim = "%s/genotypes.bim" % DATA
     snplist = "%s/w_hm3.snplist" % DATA
@@ -113,6 +117,12 @@ def run_workflow_targets():
         "YS_LAVA_LOCI":         _lava_loci(),
         "YS_LAVA_N_CONTROLS":   "12",
         "YS_LAVA_NPERM":        "500",
+        # females-as-negative-control arm
+        "YS_FBFILE":            "%s/females" % DATA,
+        "YS_FPHENO":            "%s/female_phenotypes.txt" % DATA,
+        "YS_FBASECOVAR":        "%s/female_covariates_base.txt" % DATA,
+        "YS_FNEG_FORCE_SNPS":   "%s,%s" % (_truth()["interaction_snp"].strip(),
+                                           _truth()["confound_snp"].strip()),
         "YS_OUT":       OUT,
         "YS_TMP":       TMP,
         # MKL/OpenMP thread-affinity binding asserts in some sandboxed/container
@@ -135,8 +145,13 @@ def run_workflow_targets():
              "step1_I", "gwas_I", "munge_I", "h2_I",
              "step1_R", "gwas_R", "munge_R", "h2_R",
              "rg",
+             # heritability extras: pooled GWAS + h2, stratified-vs-pooled, per-chromosome
+             "gwas_full", "munge_full", "h2_full",
+             "h2_by_stratification", "h2_by_chromosome",
              # LAVA local-rg arm (only present when LAVA_LOCI is set)
              "lava_pcs", "lava_perm_realblock", "lava_perm_confblock",
+             # females negative control (only present when FBFILE is set)
+             "female_pseudohap", "female_negcontrol",
              # chrX (only present when XBFILE is set)
              "xqc", "interaction_X", "top_int_X",
              "gwas_X_I", "xforldsc_I", "gwas_X_R", "xforldsc_R"]
@@ -216,6 +231,16 @@ def validate(wf):
           float(real_s["target_vs_controls_tail_frac"]) <= 0.20,
           "tail-fraction=%s" % real_s["target_vs_controls_tail_frac"])
 
+    # --- females negative control: confound reproduces (no Y), real does not ---
+    fnc = pd.read_csv("%s/female_negative_control.tsv" % OUT, sep="\t").set_index("ID")
+    fp_real = float(fnc.loc[true_snp, "female_int_p"])
+    fp_conf = float(fnc.loc[conf_snp, "female_int_p"])
+    check("females: ancestry confound reproduces (no Y) -> flagged",
+          bool(fnc.loc[conf_snp, "looks_like_ancestry_artifact"]),
+          "%s female_int_p=%.3g" % (conf_snp, fp_conf))
+    check("females: real Y-driven hit stays null (p_real > p_conf)", fp_real > fp_conf,
+          "%s female_int_p=%.3g vs conf %.3g" % (true_snp, fp_real, fp_conf))
+
     # --- chrX: hemizygous step-2 pass should recover the planted X interaction
     if "interaction_snp_X" in truth:
         true_x = truth["interaction_snp_X"].strip()
@@ -246,6 +271,19 @@ def validate(wf):
                      if "Liability scale h2" in l), "")
         check("Arm B liability-scale h2 reported (stratum %s)" % s,
               bool(line), line.strip())
+
+    # --- heritability extras: pooled h2, stratified-vs-pooled, per-chromosome --
+    pooled = next((l for l in open("%s/h2_full.log" % OUT).read().splitlines()
+                   if "Liability scale h2" in l), "")
+    check("pooled (non-stratified) h2 reported", bool(pooled), pooled.strip())
+    strat = pd.read_csv("%s/h2_by_stratification.tsv" % OUT, sep="\t")
+    check("h2_by_stratification has pooled + I + R rows",
+          set(strat["stratification"]) == {"pooled", "I", "R"},
+          "rows=%s" % list(strat["stratification"]))
+    perchr = pd.read_csv("%s/h2_by_chromosome.tsv" % OUT, sep="\t")
+    check("h2_by_chromosome covers chr 1-22",
+          sorted(perchr["chrom"].astype(str)) == sorted(str(c) for c in range(1, 23)),
+          "%d chromosomes" % len(perchr))
 
     print("\n%s" % ("ALL CHECKS PASSED" if ok else "SOME CHECKS FAILED"))
     return ok

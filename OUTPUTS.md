@@ -91,6 +91,23 @@ Find the `Summary of Genetic Correlation Results` block; the key fields on the d
 sample prevalence). `Intercept` near 1 is good; `Intercept` ≫ 1 (and high `Lambda GC` / `Mean
 Chi^2`) flags residual confounding/structure.
 
+**`h2_full.log`** — the **pooled** (non-stratified, all-male) SNP-heritability, from a full-sample
+main-effect GWAS (`gwas_full_*`). Same fields as `h2_{I,R}.log`.
+
+**`h2_by_stratification.tsv`** *(when `H2_POOLED`)* — the **with- vs without-Y-haplogroup**
+comparison in one table: one row each for `pooled`, `I`, `R`, with `h2`, `h2_se`, `intercept`,
+`lambda_gc`, `mean_chi2`, `n_snps`. Compare the pooled h2 to the two stratum h2's; combined with a
+cross-stratum `rg` < 1, a pooled estimate that differs from the stratum estimates points to
+Y-haplogroup-dependent architecture. (The stratum SEs are wide on half-samples — read the
+`h2_se`.)
+
+**`h2_by_chromosome.tsv`** *(when `H2_PER_CHR`)* — per-chromosome SNP-heritability from the pooled
+GWAS: one row per autosome `1`…`22` (and `X` when an X LD reference is supplied via `EUR_LD_X` +
+`HM3_X`), so you can weigh each chromosome's contribution — e.g. **chrX vs the autosomes**. Each
+row has the same columns as above; to compare contributions fairly look at h2 relative to each
+chromosome's `n_snps` (per-chromosome h2 is noisy — small chromosomes especially — and these are
+separate LDSC fits, the simple/interpretable choice; partitioned LDSC or GREML are more rigorous).
+
 **`gwas_{I,R}_autism.regenie`** — the raw per-stratum main-effect GWAS (REGENIE step 2). Feeds Arm
 B; `gwas_{I,R}_chr<c>_autism.regenie` chunks (if split) are intermediate.
 
@@ -135,6 +152,31 @@ the deconfounded significance.
 
 ---
 
+## Female negative control (when `FBFILE` is set)
+
+Females carry no Y, so a real Y-haplogroup interaction can't exist in them — these files
+re-test the male hits in an ancestry-matched female split to expose ancestry artefacts.
+
+**`female_negative_control.tsv`** — one row per male interaction hit:
+
+| column | meaning |
+|--------|---------|
+| `ID` | the variant (a male interaction hit) |
+| `male_LOG10P` | its interaction `LOG10P` in the male scan |
+| `female_int_chi2`, `female_int_p` | the `SNP × pseudo-Hap` interaction in the **females** |
+| `looks_like_ancestry_artifact` | `True` if `female_int_p < α` (default 0.05) |
+
+Read it asymmetrically: **`looks_like_ancestry_artifact = True` is strong evidence the male
+hit is ancestry** (something with no Y shows the "interaction"). A **non-flagged** hit (large
+`female_int_p`) is *consistent* with being Y-driven but not proof — autism's architecture is
+sex-differential, so a hit can be null in females for sex reasons rather than because it needs
+the Y. Treat positives as confounding confirmed, nulls as "not refuted." (See `METHODS.md` §6.)
+
+**`female_lambda.txt`** — `females_used`, `hits_tested`, `hits_flagged_artifact`, and the
+genome-wide `female_interaction_lambda` over a random panel (overall inflation of the female
+SNP×pseudo-Hap scan). `female_pseudohap.txt` is the female pseudo-haplogroup assignment
+(intermediate).
+
 ## A 30-second decision guide
 
 - **Is a specific variant a real I-vs-R interaction?** `top_interactions(_X).tsv` genome-wide
@@ -143,10 +185,13 @@ the deconfounded significance.
 - **Does haplogroup reshape the architecture overall?** `I_vs_R_rg.log`: `rg` significantly < 1.
 - **Does a candidate region diverge locally?** `lava_<name>_summary.txt`: small `target_anc_matched_p`
   **and** small `target_vs_controls_tail_frac`.
+- **Is a surviving interaction hit actually ancestry?** `female_negative_control.tsv`: if it's
+  flagged (`looks_like_ancestry_artifact`), yes — kill it.
 
 ## Everything else (not results)
 
 `*.log` (qc/step1/regenie/ldsc/plink), `*_pred.list`, `*.loco`, `keep_{I,R}.txt`,
-`int_covars.txt`, `qc_pass.snplist`, `lava_pcs.*`, `lava_prune.*`, and the `*_chr<c>_*` /
-`*_b<k>_*` chunk/batch files are **intermediate** — inputs to later steps or scratch for
-debugging, not final results.
+`int_covars.txt`, `qc_pass.snplist`, `lava_pcs.*`, `lava_prune.*`, the pooled-GWAS
+intermediates (`gwas_full_*.regenie`, `gwas_full.forldsc.txt`, `munged_full.sumstats.gz`,
+the per-chromosome `h2_chr<c>.log`), and the `*_chr<c>_*` / `*_b<k>_*` chunk/batch files are
+**intermediate** — inputs to later steps or scratch for debugging, not final results.

@@ -96,6 +96,32 @@ PREV_POP  = float(_env("PREV_POP", "0.03"))
 # toward r_g = 1).
 STRATUM_SPECIFIC_STEP1 = _env("STRATUM_SPECIFIC_STEP1", "True").lower() in ("1", "true", "yes")
 
+# Heritability extras.
+#  H2_POOLED  : also run a pooled (non-stratified) full-sample GWAS -> h2_full,
+#               and tabulate it against the per-stratum h2_{I,R} (h2_by_stratification.tsv).
+#  H2_PER_CHR : per-chromosome h2 from the pooled GWAS (h2_by_chromosome.tsv), to
+#               weigh each chromosome's contribution; chrX is included only if an
+#               X-chromosome LD reference (EUR_LD_X + HM3_X) is supplied.
+def _flag(name, default):
+    return _env(name, default).lower() in ("1", "true", "yes")
+H2_POOLED  = _flag("H2_POOLED", "True")
+H2_PER_CHR = _flag("H2_PER_CHR", "True")
+EUR_LD_X   = _env("EUR_LD_X", "")     # chrX LD-score reference dir/prefix (for chrX h2)
+HM3_X      = _env("HM3_X", "")        # X-inclusive --merge-alleles list (for chrX munge)
+
+# Females-as-negative-control. Females carry no Y, so a genuine Y-haplogroup x
+# autosome interaction cannot exist in them; re-testing the male interaction hits
+# for SNP x pseudo-Hap in females (pseudo-Hap = the ancestry-matched split,
+# assign_pseudo_hap.py) exposes ancestry artefacts. Like the male inputs, these
+# default to the bundled SYNTHETIC FEMALE DATA so the arm runs out of the box --
+# SWAP for your real female files (set FBFILE="" to skip the arm entirely). The
+# female PCs must live in the SAME space as the male PCs (FBASECOVAR), e.g. PCs
+# computed jointly across sexes or females projected onto the male PCA.
+FBFILE     = _env("FBFILE", "%s/tests/work/data/females" % ROOT)                    # female plink1 prefix
+FPHENO     = _env("FPHENO", "%s/tests/work/data/female_phenotypes.txt" % ROOT)      # female FID IID <pheno>
+FBASECOVAR = _env("FBASECOVAR", "%s/tests/work/data/female_covariates_base.txt" % ROOT)  # female PCs (male space)
+FNEG_FORCE_SNPS = _env("FNEG_FORCE_SNPS", "")  # comma-sep SNP IDs to always re-test in females
+
 # ---------------------------------------------------------------------------
 # derived
 # ---------------------------------------------------------------------------
@@ -369,6 +395,112 @@ gwf.target("rg",
            pixi=PIXI, root=ROOT)
 
 # ---------------------------------------------------------------------------
+# Heritability extras: a pooled (non-stratified) full-sample GWAS for the
+# stratified-vs-unstratified h2 comparison, and per-chromosome h2 to weigh each
+# chromosome (incl. chrX, given an X LD reference) against the others.
+# ---------------------------------------------------------------------------
+_X_H2 = bool(XBFILE and EUR_LD_X and HM3_X)
+if H2_POOLED or H2_PER_CHR:
+    def _gwas_full_step2(chr_flag, out_prefix):
+        return """
+{pixi} regenie --step 2 --bed {bfile} {chrflag} \
+  --phenoFile {pheno} --phenoColList {ph} \
+  --covarFile {covar} --covarColList {base} {cat} \
+  --bt --firth --approx --pThresh 0.01 \
+  --bsize 400 --minMAC 20 \
+  --pred {out}/step1_full_pred.list \
+  --threads 16 --out {outpref}
+""".format(pixi=PIXI, bfile=BFILE, chrflag=chr_flag, out=OUT, pheno=PHENO,
+           ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT, outpref=out_prefix)
+
+    _GWF = "%s/gwas_full_%s.regenie" % (OUT, PHENONAME)
+    if SPLIT_CHROMS:
+        _fchunks = []
+        for _c in _chroms(SPLIT_CHROMS):
+            _fc = "%s/gwas_full_chr%d_%s.regenie" % (OUT, _c, PHENONAME)
+            gwf.target("gwas_full_chr%d" % _c,
+                       inputs=["%s/step1_full_pred.list" % OUT], outputs=[_fc],
+                       cores=16, memory="32g", walltime="24:00:00") \
+                << _gwas_full_step2("--chr %d" % _c, "%s/gwas_full_chr%d" % (OUT, _c))
+            _fchunks.append(_fc)
+        gwf.target("gwas_full", inputs=_fchunks, outputs=[_GWF],
+                   cores=1, memory="4g", walltime="00:30:00") << """
+{pixi} python {root}/scripts/concat_regenie.py --out {gw} --inputs {chunks}
+""".format(pixi=PIXI, root=ROOT, gw=_GWF, chunks=" ".join(_fchunks))
+    else:
+        gwf.target("gwas_full", inputs=["%s/step1_full_pred.list" % OUT],
+                   outputs=[_GWF], cores=16, memory="32g", walltime="24:00:00") \
+            << _gwas_full_step2("", "%s/gwas_full" % OUT)
+
+    gwf.target("munge_full",
+               inputs=[_GWF], outputs=["%s/munged_full.sumstats.gz" % OUT],
+               cores=2, memory="8g", walltime="01:00:00") << """
+{pixi} python {root}/scripts/regenie_to_munge.py \
+  --regenie {gw} --out {out}/gwas_full.forldsc.txt
+{ldsc} {ldscdir}/munge_sumstats.py \
+  --sumstats {out}/gwas_full.forldsc.txt --merge-alleles {hm3} \
+  --snp SNP --a1 A1 --a2 A2 --N-col N --p P --signed-sumstats BETA,0 \
+  --chunksize 500000 --out {out}/munged_full
+""".format(pixi=PIXI, root=ROOT, gw=_GWF, out=OUT, ldsc=LDSCRUN,
+           ldscdir=LDSC_DIR, hm3=HM3)
+
+if H2_POOLED:
+    gwf.target("h2_full",
+               inputs=["%s/munged_full.sumstats.gz" % OUT],
+               outputs=["%s/h2_full.log" % OUT],
+               cores=2, memory="8g", walltime="00:30:00") << """
+SAMP=$({pixi} python {root}/scripts/samp_prev.py --pheno {pheno} --pheno-name {ph})
+{ldsc} {ldscdir}/ldsc.py \
+  --h2 {out}/munged_full.sumstats.gz \
+  --ref-ld-chr {eurld}/ --w-ld-chr {eurld}/ \
+  --samp-prev $SAMP --pop-prev {pop} \
+  --out {out}/h2_full
+""".format(pixi=PIXI, root=ROOT, pheno=PHENO, ph=PHENONAME, ldsc=LDSCRUN,
+           ldscdir=LDSC_DIR, out=OUT, eurld=EUR_LD, pop=PREV_POP)
+
+    gwf.target("h2_by_stratification",
+               inputs=["%s/h2_full.log" % OUT, "%s/h2_I.log" % OUT, "%s/h2_R.log" % OUT],
+               outputs=["%s/h2_by_stratification.tsv" % OUT],
+               cores=1, memory="2g", walltime="00:10:00") << """
+{pixi} python {root}/scripts/collect_h2.py \
+  --logs {out}/h2_full.log {out}/h2_I.log {out}/h2_R.log \
+  --labels pooled I R --label-col stratification \
+  --out {out}/h2_by_stratification.tsv
+""".format(pixi=PIXI, root=ROOT, out=OUT)
+
+if H2_PER_CHR:
+    _aut = _chroms(SPLIT_CHROMS) if SPLIT_CHROMS else list(range(1, 23))
+    _per_logs = ["%s/h2_chr%d.log" % (OUT, c) for c in _aut]
+    _per_labels = [str(c) for c in _aut]
+    _x_step = _x_logs = ""
+    _x_inputs = []
+    if _X_H2:
+        _per_logs.append("%s/h2_chrX.log" % OUT)
+        _per_labels.append("X")
+        _x_inputs = ["%s/munged_X_full.sumstats.gz" % OUT]
+        _x_step = ("{ldsc} {ldscdir}/ldsc.py --h2 {out}/munged_X_full.sumstats.gz "
+                   "--ref-ld-chr {xld}/ --w-ld-chr {xld}/ --samp-prev $SAMP "
+                   "--pop-prev {pop} --out {out}/h2_chrX\n").format(
+                       ldsc=LDSCRUN, ldscdir=LDSC_DIR, out=OUT, xld=EUR_LD_X, pop=PREV_POP)
+    gwf.target("h2_by_chromosome",
+               inputs=["%s/munged_full.sumstats.gz" % OUT] + _x_inputs,
+               outputs=["%s/h2_by_chromosome.tsv" % OUT],
+               cores=2, memory="8g", walltime="02:00:00") << """
+SAMP=$({pixi} python {root}/scripts/samp_prev.py --pheno {pheno} --pheno-name {ph})
+for c in {chroms}; do
+  {ldsc} {ldscdir}/ldsc.py --h2 {out}/munged_full.sumstats.gz \
+    --ref-ld {eurld}/$c --w-ld {eurld}/$c \
+    --samp-prev $SAMP --pop-prev {pop} --out {out}/h2_chr$c
+done
+{xstep}{pixi} python {root}/scripts/collect_h2.py \
+  --logs {logs} --labels {labels} --label-col chrom \
+  --out {out}/h2_by_chromosome.tsv
+""".format(pixi=PIXI, root=ROOT, pheno=PHENO, ph=PHENONAME, ldsc=LDSCRUN,
+           ldscdir=LDSC_DIR, out=OUT, eurld=EUR_LD, pop=PREV_POP,
+           chroms=" ".join(str(c) for c in _aut), xstep=_x_step,
+           logs=" ".join(_per_logs), labels=" ".join(_per_labels))
+
+# ---------------------------------------------------------------------------
 # chrX (optional; only built when XBFILE is set). LDSC is autosomal, so the X
 # chromosome -- the mechanistically interesting target (X-linked regulators x
 # Hap) -- gets its own REGENIE step-2 pass reusing the autosomal step-1
@@ -451,6 +583,37 @@ mv {out}/x_qc.snplist {out}/x_qc_pass.snplist
 {pixi} python {root}/scripts/regenie_to_munge.py \
   --regenie {out}/gwas_X_{s}_{ph}.regenie --out {out}/gwas_X_{s}.forldsc.txt
 """.format(pixi=PIXI, root=ROOT, out=OUT, s=s, ph=PHENONAME)
+
+    # pooled (all-male) chrX GWAS -> munged, so chrX can enter h2_by_chromosome.
+    # Only when an X LD reference + X merge-alleles list are supplied (_X_H2).
+    if _X_H2:
+        gwf.target("gwas_X_full",
+                   inputs=["%s/step1_full_pred.list" % OUT, "%s/x_qc_pass.snplist" % OUT],
+                   outputs=["%s/gwas_X_full_%s.regenie" % (OUT, PHENONAME)],
+                   cores=16, memory="32g", walltime="24:00:00") << """
+{pixi} regenie --step 2 --bed {xbfile} \
+  --chr 23 --extract {out}/x_qc_pass.snplist {xhemi} \
+  --phenoFile {pheno} --phenoColList {ph} \
+  --covarFile {covar} --covarColList {base} {cat} \
+  --bt --firth --approx --pThresh 0.01 \
+  --bsize 400 --minMAC 20 \
+  --pred {out}/step1_full_pred.list \
+  --threads 16 --out {out}/gwas_X_full
+""".format(pixi=PIXI, xbfile=XBFILE, xhemi=XHEMI, out=OUT, pheno=PHENO,
+           ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT)
+
+        gwf.target("munge_X_full",
+                   inputs=["%s/gwas_X_full_%s.regenie" % (OUT, PHENONAME)],
+                   outputs=["%s/munged_X_full.sumstats.gz" % OUT],
+                   cores=2, memory="8g", walltime="01:00:00") << """
+{pixi} python {root}/scripts/regenie_to_munge.py \
+  --regenie {out}/gwas_X_full_{ph}.regenie --out {out}/gwas_X_full.forldsc.txt
+{ldsc} {ldscdir}/munge_sumstats.py \
+  --sumstats {out}/gwas_X_full.forldsc.txt --merge-alleles {hm3x} \
+  --snp SNP --a1 A1 --a2 A2 --N-col N --p P --signed-sumstats BETA,0 \
+  --chunksize 500000 --out {out}/munged_X_full
+""".format(pixi=PIXI, root=ROOT, out=OUT, ph=PHENONAME, ldsc=LDSCRUN,
+           ldscdir=LDSC_DIR, hm3x=HM3_X)
 
 # ---------------------------------------------------------------------------
 # LAVA arm (optional; only built when LAVA_LOCI is set). Local cross-stratum
@@ -545,3 +708,37 @@ if LAVA_LOCI:
   {out}/lava_input.info {out}/lava_sample_overlap.txt {ref} \
   {out}/lava_loci.tsv {out}/lava_local_rg.tsv
 """.format(rscript=RSCRIPT, root=ROOT, out=OUT, ref=LAVA_REF)
+
+# ---------------------------------------------------------------------------
+# Females-as-negative-control (optional; only built when FBFILE is set). Females
+# have no Y, so a real Y-haplogroup x autosome interaction can't exist in them.
+# We split females along the male I-vs-R ancestry propensity (pseudo-Hap) and
+# re-test the male interaction hits for SNP x pseudo-Hap in females: a hit that
+# reproduces in females is an ancestry artefact; a real Y-driven hit stays null.
+# See METHODS.md; scripts/assign_pseudo_hap.py + scripts/female_negcontrol.py.
+# ---------------------------------------------------------------------------
+if FBFILE:
+    gwf.target("female_pseudohap",
+               inputs=[HAPFILE, BASECOVAR, "%s.bed" % FBFILE],
+               outputs=["%s/female_pseudohap.txt" % OUT],
+               cores=1, memory="4g", walltime="00:10:00") << """
+{pixi} python {root}/scripts/assign_pseudo_hap.py \
+  --male-hap {hap} --male-covar {covar} --female-covar {fcovar} \
+  --npc {npc} --out {out}/female_pseudohap.txt
+""".format(pixi=PIXI, root=ROOT, hap=HAPFILE, covar=BASECOVAR,
+           fcovar=FBASECOVAR, npc=NPC, out=OUT)
+
+    gwf.target("female_negcontrol",
+               inputs=["%s/top_interactions.tsv" % OUT,
+                       "%s/female_pseudohap.txt" % OUT, "%s.bed" % FBFILE],
+               outputs=["%s/female_negative_control.tsv" % OUT,
+                        "%s/female_lambda.txt" % OUT],
+               cores=8, memory="16g", walltime="04:00:00") << """
+{pixi} python {root}/scripts/female_negcontrol.py \
+  --male-interactions {out}/top_interactions.tsv \
+  --fbfile {fbfile} --fpheno {fpheno} --pheno-name {ph} \
+  --fcovar {fcovar} --female-hap {out}/female_pseudohap.txt --npc {npc} {force} \
+  --seed 1 --out-prefix {out}/female
+""".format(pixi=PIXI, root=ROOT, out=OUT, fbfile=FBFILE, fpheno=FPHENO,
+           ph=PHENONAME, fcovar=FBASECOVAR, npc=NPC,
+           force=("--force-snps %s" % FNEG_FORCE_SNPS) if FNEG_FORCE_SNPS else "")

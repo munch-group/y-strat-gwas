@@ -205,6 +205,38 @@ Two practical points the pipeline handles:
 LDSC as distributed is autosomal, so Arm B's `r_g`/`h2` do **not** include the X
 chromosome (see Section 8).
 
+### Heritability: stratified vs pooled, and per-chromosome
+
+Two complementary readouts sit alongside `r_g`, both from LDSC `--h2`.
+
+**Stratified vs pooled (does ignoring haplogroup change the apparent heritability?).**
+The pipeline reports per-stratum SNP-heritability `h2_I`, `h2_R` and a **pooled**
+estimate `h2_pooled` from a single full-sample GWAS that ignores Hap (all males
+together). If haplogroup does not reshape the architecture, the three agree (the
+pooled estimate is the tightest, since it uses the whole sample). If there is genuine
+G × Hap interaction, the alleles' effects differ between strata, so the pooled GWAS
+estimates an *average* effect — and when effects are heterogeneous they partially
+cancel, which can pull `h2_pooled` **below** the stratum estimates. Read this as a
+**descriptive companion to `r_g`**, not an independent test: `r_g < 1` is the powered,
+rigorous statement; the h2 comparison is a sanity check in the same direction. And
+mind the SEs — each stratum is a half-sample, so its h2 SE is wide and apparent
+pooled-vs-stratum gaps are often noise (`h2_by_stratification.tsv` carries the SE for
+exactly this reason).
+
+**Per-chromosome (how much does each chromosome — especially chrX — contribute?).**
+SNP-heritability can be partitioned by chromosome by running LDSC once per chromosome
+(restricting both the sumstats and the LD scores to that chromosome). Under
+polygenicity each chromosome's h2 is roughly proportional to its length / SNP count,
+so the interesting question is **enrichment**: does a chromosome carry more (or less)
+heritability than its size predicts? Given this project's interest in X-linked
+regulators, the headline use is **chrX versus the autosomes** — compare h2 *per SNP*
+(h2 ÷ `n_snps`), not raw h2, to put a small chromosome on equal footing. Caveats:
+per-chromosome estimates are **noisy** (few SNPs, especially small chromosomes), these
+are separate fits rather than one joint model (partitioned LDSC or GREML with
+per-chromosome GRMs are more rigorous), and — because LDSC is autosomal — **chrX is
+included only when you supply an X-chromosome LD reference** (the pooled chrX GWAS is
+emitted ready to feed it; see Section 8).
+
 ---
 
 ## 5. Interaction is scale-dependent
@@ -319,6 +351,44 @@ interaction statistics (its genomic-inflation factor λ) to the **permutation-nu
 to 1, because the null is built against the actual Hap–ancestry structure rather than
 an idealised no-structure world.
 
+### A no-Y negative control: females
+
+There is a second, independent line of defence that uses a different population rather
+than a different null: **females**. A female carries no Y chromosome, so a genuine
+Y-haplogroup × autosome interaction *cannot* exist in her — but the **ancestry artefact
+can**, because females sit on the same autosomal ancestry gradient that haplogroup I vs
+R tags in males. So we split the females along exactly that axis and look for the
+interaction there:
+
+1. fit the Hap **propensity** `P(Hap = I | PCs)` on the males and apply it to the
+   females, labelling each female pseudo-I / pseudo-R to match the male I:R ratio
+   (`assign_pseudo_hap.py`) — this is the *same* ancestry split, transplanted into a
+   group with no Y;
+2. re-test each **male interaction hit** for `SNP × pseudo-Hap` in the females, with the
+   same model (`female_negcontrol.py`).
+
+The readout is sharp: **a male hit that reproduces in the females is an ancestry
+artefact** (something with no Y is showing the "interaction"); a male hit that stays
+**null** in the females is consistent with being genuinely Y-driven.
+
+Two things make this complement the permutation rather than duplicate it. First, the
+female split is not conditioned on PCs at the testing stage, so it can expose
+artefacts driven by ancestry structure that the (global-PC-bounded) permutation test
+misses — including *local* ancestry that tracks the global gradient. Second, and
+crucially, the test is **asymmetric in what it proves**: a *significant* female result
+is strong, direct evidence of confounding; a *null* female result is weaker — it is
+consistent with a Y-driven effect, but autism's architecture is **sex-differential**,
+so a hit could be null in females for reasons of sex rather than because it needs the Y.
+Read a positive female result as "this hit is ancestry," and a null as "not refuted —
+still needs replication / local ancestry." It also assumes the female PCs live in the
+same ancestry space as the male PCs (PCs computed jointly, or females projected).
+
+This is the principled way to bring females in: as a **negative control**, *not* as a
+third symmetric stratum alongside I and R — pooling the sexes into one stratification
+would let **sex** (a far larger axis than Y-haplogroup, with its own differential
+architecture and X-dosage differences) dominate every contrast, reintroducing exactly
+the kind of confounding the male-only design was built to avoid.
+
 ---
 
 ## 7. Localising the divergence: LAVA local genetic correlation
@@ -403,6 +473,8 @@ to autosomal ones.
 | Local-`r_g` deconfounding + negative controls | `lava_perm_<name>` / `local_rg_perm.py` |
 | Region-excluded PCs (anti-circularity) | `lava_pcs` (PCA with the locus chromosome dropped) |
 | Per-stratum liability-scale `h2` (samp+pop prev) | `h2_{I,R}` / `samp_prev.py` |
+| Stratified vs pooled `h2` | `gwas_full` → `h2_full`, tabulated in `h2_by_stratification.tsv` (`collect_h2.py`) |
+| Per-chromosome `h2` (chrX vs autosomes) | `h2_by_chromosome` / `collect_h2.py` (chrX needs `EUR_LD_X`+`HM3_X`) |
 | Shared vs stratum-specific step 1 | `STRATUM_SPECIFIC_STEP1` |
 | chrX hemizygous coding | `interaction_X` / `gwas_X_{I,R}` (`--par-region`, `--sex-specific male`) |
 
