@@ -26,7 +26,7 @@ from gwf import Workflow
 def _env(name, default):
     return os.environ.get("YS_" + name, default)
 
-ACCOUNT   = _env("xy-brain", None)   # slurm account
+ACCOUNT   = _env("ChrXh2", None)   # slurm account
 ROOT      = os.path.dirname(os.path.abspath(__file__))
 
 # Defaults below point at the bundled SYNTHETIC TEST DATA (tests/work/data) so the
