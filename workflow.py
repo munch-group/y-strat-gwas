@@ -331,7 +331,7 @@ gwf.target("step1_full",
   --extract {out}/qc_pass.snplist \
   --phenoFile {pheno} --phenoColList {ph} \
   --covarFile {covar} --covarColList {base} {cat} \
-  --bt --bsize 1000 --lowmem --lowmem-prefix {tmp}/step1_full \
+  --bt --force-step1 --bsize 1000 --lowmem --lowmem-prefix {tmp}/step1_full \
   --threads 16 --out {out}/step1_full
 """.format(pixi=PIXI, bfile=BFILE, keepir=KEEP_IR, out=OUT, pheno=PHENO,
            ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT, tmp=TMP)
@@ -441,7 +441,7 @@ for s in ("I", "R"):
   --extract {out}/qc_pass.snplist \
   --phenoFile {pheno} --phenoColList {ph} \
   --covarFile {covar} --covarColList {base} {cat} \
-  --bt --bsize 1000 --lowmem --lowmem-prefix {tmp}/step1_{s} \
+  --bt --force-step1 --bsize 1000 --lowmem --lowmem-prefix {tmp}/step1_{s} \
   --threads 16 --out {out}/step1_{s}
 """.format(pixi=PIXI, bfile=BFILE, keep=keep, out=OUT, pheno=PHENO,
            ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT, tmp=TMP, s=s)
