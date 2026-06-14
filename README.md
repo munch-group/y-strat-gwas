@@ -24,13 +24,26 @@ Y-haplogroup **I** and **R**:
 | file | columns |
 |------|---------|
 | `genotypes.{bed,bim,fam}` | plink1, autosomes, QC'd samples |
-| `phenotypes.txt` | `FID IID autism` — `autism` = 1 case / 0 control / `NA` |
+| `phenotypes.txt` | `FID IID autism` — REGENIE coding 1=case / 0=control / `NA` (use `RAW_PHENO` to recode PLINK 1/2) |
 | `covariates_base.txt` | `FID IID PC1 … PCk age batch …` |
-| `haplogroup.txt` | `FID IID Hap` — `Hap` = `I` or `R` |
+| `haplogroup.txt` | `FID IID … <hap-col> …` — the haplogroup column is `HAPCOL` (default `Hap`; e.g. `Major`); rows not `I`/`R` are **dropped** |
 | `genotypesX.{bed,bim,fam}` | *(optional)* plink1 chrX (chromosome coded 23/X), **SEX filled in the `.fam`** (1=male) |
 | `females.{bed,bim,fam}` + covars | *(`FBFILE`, on by default)* female plink1 (same SNP IDs as the males) + female PCs in the **same PC space** as the males (negative control) |
 
-`Hap` is coded internally as I=1, R=0. The optional chrX fileset (`XBFILE`) is analysed in
+`Hap` is coded internally as I=1, R=0. **Real-data adapters:** set `HAPCOL` if the haplogroup
+column isn't named `Hap` (non-I/R rows are dropped from the whole analysis regardless). If your
+covariate file is in the form `FID IID SOL C1..C10 st1` (PCs not named `PC`, no age/batch), set
+`RAW_COVAR` (and `RAW_FCOVAR` for females) and a `prep_covar` task renames `PC_PREFIX`→`PC` and adds
+dummy `age`/`batch` columns; set `EXTRA_COVAR=""`/`CATCOVAR=""` to drop those covariates instead.
+If your phenotype is in PLINK 1/2 coding (control=1, case=2), set `RAW_PHENO` (and `RAW_FPHENO`) and
+a `prep_pheno` task recodes it to REGENIE's 0/1 (`PHENO_CASE`/`PHENO_CONTROL` configurable). Real
+`.pheno` files are usually **headerless** (`FID IID value`), which is the default (`PHENO_HAS_HEADER=False`,
+value at `PHENO_VALUE_COL`, default 3); set `PHENO_HAS_HEADER=True` to select the column by name instead.
+
+To point everything at the real iPSYCH cohort at once, uncomment the **REAL DATA** block at the end of
+the CONFIG section in `workflow.py` (it sets all paths/parameters in one place).
+
+The optional chrX fileset (`XBFILE`) is analysed in
 its own REGENIE step-2 pass — REGENIE codes non-PAR males hemizygously (0/2) from the `.fam`
 sex column plus the `--par-region` build, so the sex column **must** be set.
 

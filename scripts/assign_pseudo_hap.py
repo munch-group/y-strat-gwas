@@ -21,7 +21,8 @@ HAP_CODE = {"I": 1, "R": 0}
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--male-hap", required=True, help="FID IID Hap (I/R)")
+    ap.add_argument("--male-hap", required=True, help="male haplogroup file (FID IID ... <hap-col>)")
+    ap.add_argument("--hap-col", default="Hap", help="name of the haplogroup column")
     ap.add_argument("--male-covar", required=True, help="male FID IID PC1..PCk ...")
     ap.add_argument("--female-covar", required=True, help="female FID IID PC1..PCk ...")
     ap.add_argument("--npc", type=int, required=True)
@@ -30,7 +31,7 @@ def main():
     pcn = ["PC%d" % i for i in range(1, a.npc + 1)]
 
     hap = pd.read_csv(a.male_hap, sep=r"\s+", engine="python")
-    hap["Hap"] = hap["Hap"].astype(str).str.upper().str.strip().map(HAP_CODE)
+    hap["Hap"] = hap[a.hap_col].astype(str).str.upper().str.strip().map(HAP_CODE)  # I/R only
     mcov = pd.read_csv(a.male_covar, sep=r"\s+", engine="python")
     m = mcov.merge(hap[["FID", "IID", "Hap"]], on=["FID", "IID"], how="inner").dropna(
         subset=pcn + ["Hap"])

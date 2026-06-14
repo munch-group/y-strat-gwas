@@ -41,6 +41,14 @@ HAPFILE   = _env("HAPFILE", "%s/tests/work/data/haplogroup.txt" % ROOT)      # F
 PHENONAME = _env("PHENONAME", "autism")
 NPC       = int(_env("NPC", "10"))                         # synthetic data has 10 PCs (set yours for real data)
 CATCOVAR  = _env("CATCOVAR", "batch")                      # comma-sep categorical covars, or ""
+# To run on the real iPSYCH cohort, keep these synthetic defaults and uncomment the
+# "REAL DATA" override block at the end of this CONFIG section -- it sets every
+# real path/parameter in one place (and routes the raw pheno/covar through the
+# prep tasks). The real file layouts: Hap file has the lineage in col 6 named
+# "Major" and includes non-I/R males (dropped); the PC file is a plink MDS cov
+# "FID IID SOL C1..C10 st1" (no age/batch -- prep_covar renames C->PC and adds
+# dummies); the .pheno files are headerless "FID IID value", 2=case/1=control.
+
 
 # Parallelise the REGENIE step-2 scans (interaction, gwas_{I,R}) by chromosome:
 # a fan-out job per chromosome + a gather. Accepts ranges/lists, e.g. "1-22" or
@@ -80,7 +88,7 @@ RSCRIPT         = _env("RSCRIPT", "Rscript")          # for the LAVA R step
 # SEX column filled in the .fam (1=male). Empty string disables all X targets.
 # REGENIE codes non-PAR males as hemizygous (0/2) automatically from sex + build.
 XBFILE       = _env("XBFILE", "")  # "" => skip chrX; synthetic X is tests/work/data/genotypesX
-GENOME_BUILD = _env("GENOME_BUILD", "hg38")               # for REGENIE --par-region
+GENOME_BUILD = _env("GENOME_BUILD", "hg19")               # for REGENIE --par-region
 
 # LDSC reference data (download separately; see README). Defaults point at the
 # bundled synthetic reference -- swap EUR_LD/HM3 for the real 1000G EUR / HapMap3.
@@ -122,6 +130,83 @@ FPHENO     = _env("FPHENO", "%s/tests/work/data/female_phenotypes.txt" % ROOT)  
 FBASECOVAR = _env("FBASECOVAR", "%s/tests/work/data/female_covariates_base.txt" % ROOT)  # female PCs (male space)
 FNEG_FORCE_SNPS = _env("FNEG_FORCE_SNPS", "")  # comma-sep SNP IDs to always re-test in females
 
+# --- Real-data input adapters -------------------------------------------------
+# Haplogroup column name (real files may call it e.g. "Major"; rows whose value is
+# not I or R are DROPPED from the whole analysis -- a keep_IR list restricts the
+# full-sample targets, the per-stratum keep lists restrict the rest).
+HAPCOL = _env("HAPCOL", "Hap")
+
+# Covariate prep. If RAW_COVAR is set, a prep_covar task renames the PC columns from
+# PC_PREFIX (e.g. "C") to PC1..PCk and adds any model covariates the raw file lacks
+# (the EXTRA_COVAR quantitative cols + the CATCOVAR categorical cols) as DUMMY
+# placeholders, writing the BASECOVAR the rest of the pipeline consumes. Same for
+# RAW_FCOVAR -> FBASECOVAR (females). Leave empty to use BASECOVAR/FBASECOVAR as-is.
+RAW_COVAR   = _env("RAW_COVAR", "")      # raw male covar (FID IID ... <PC_PREFIX>1..k ...)
+RAW_FCOVAR  = _env("RAW_FCOVAR", "")     # raw female covar
+PC_PREFIX   = _env("PC_PREFIX", "PC")    # PC column prefix in the raw file (real: "C")
+EXTRA_COVAR = _env("EXTRA_COVAR", "age")  # quantitative covars beyond PCs (comma-sep, or "")
+
+# Phenotype recode. REGENIE --bt wants control=0, case=1; real files are often in
+# PLINK 1/2 coding. If RAW_PHENO is set, a prep_pheno task maps PHENO_CASE->1 /
+# PHENO_CONTROL->0 (else NA), writing the PHENO the pipeline consumes. Same for
+# RAW_FPHENO -> FPHENO (females). Leave empty to use PHENO/FPHENO as-is.
+RAW_PHENO    = _env("RAW_PHENO", "")     # raw male pheno (FID IID ... <pheno> ...)
+RAW_FPHENO   = _env("RAW_FPHENO", "")    # raw female pheno
+PHENO_RAW_COL = _env("PHENO_RAW_COL", PHENONAME)  # phenotype column (header case)
+PHENO_CASE    = _env("PHENO_CASE", "2")  # raw value meaning case
+PHENO_CONTROL = _env("PHENO_CONTROL", "1")  # raw value meaning control
+# Real PLINK .pheno files are usually HEADERLESS ("FID IID value"). Keep
+# PHENO_HAS_HEADER False to read positionally (phenotype value = the 1-based
+# PHENO_VALUE_COL, default 3). Set True if the raw pheno has a header naming the
+# column (then PHENO_RAW_COL selects it).
+PHENO_HAS_HEADER = _env("PHENO_HAS_HEADER", "False").lower() in ("1", "true", "yes")
+PHENO_VALUE_COL  = int(_env("PHENO_VALUE_COL", "3"))
+
+# =============================================================================
+# REAL DATA  -- uncomment this whole block to run on the iPSYCH cohort instead of
+# the synthetic test data. It overrides the relevant defaults above in one place;
+# paths are from file_paths.txt. The raw pheno/covar go through RAW_PHENO /
+# RAW_COVAR (the prep tasks fix their format) rather than PHENO / BASECOVAR.
+# Each value can also be set from the shell via its YS_* env var instead.
+# =============================================================================
+# ACCOUNT    = "ChrXh2"          # your slurm account (was None -> no account)
+# ENV_PREFIX = ""                # clear the synthetic-data sandbox KMP_AFFINITY flag
+# _DATA = "/faststorage/jail/project/ChrXh2/data"
+# _HAP  = "/faststorage/jail/project/ChrXh2/shannon/y_haplo/results"
+#
+# # --- autosomes (males; non-I/R males dropped everywhere via keep_IR) ---------
+# # NB: plink/REGENIE read <prefix>.bed/.bim/.fam for this prefix. If your files
+# # are named .bam/.bin, symlink them to .bed/.bim first.
+# BFILE   = "%s/chrX/autosomes/iPSYCH2015_HRC_2020-merge.hg19.ch.fl.bgn" % _DATA
+# HAPFILE = "%s/haplogroup_combined_haplogroup_assignments.txt" % _HAP
+# HAPCOL  = "Major"              # haplogroup in col 6, named "Major"; FID/IID in cols 1-2
+# NPC     = 10
+#
+# # --- phenotype: headerless PLINK .pheno, value in col 3, 2=case / 1=control --
+# RAW_PHENO     = "%s/pheno/asdGWAS2015.pheno" % _DATA
+# PHENO_CASE    = "2"
+# PHENO_CONTROL = "1"            # PHENO_HAS_HEADER stays False (value = PHENO_VALUE_COL=3)
+#
+# # --- covariates: plink MDS cov "FID IID SOL C1..C10 st1" (has a header) -------
+# RAW_COVAR   = "%s/pca/ASD2015_pca2_ell_dk-dim3_8_8_8.menv.mds_cov" % _DATA
+# PC_PREFIX   = "C"              # rename C1..C10 -> PC1..PC10
+# EXTRA_COVAR = "age"            # not in the raw file -> added as a dummy (or "" to drop)
+# CATCOVAR    = "batch"          # not in the raw file -> added as a dummy (or "" to drop)
+#
+# # --- chrX (hemizygous males, build hg19) -------------------------------------
+# XBFILE       = "%s/chrX/M/iPSYCH2015_HRC_ChrX_M_2020-merge.hg19.ch.fl.bgn" % _DATA
+# GENOME_BUILD = "hg19"
+#
+# # --- females negative control (set FBFILE="" to skip the arm) ----------------
+# # FBFILE may be the shared autosome fileset: females are picked out by the
+# # FEMALE-ONLY pheno/covar below (males in the fileset fall out of the sample
+# # intersection). RAW_FCOVAR must be female-only AND in the SAME PC space as the
+# # males (restrict the joint .mds_cov to females -- it already is the joint
+# # autosomal PCA). RAW_FPHENO is the headerless female .pheno (same 2/1 coding).
+# FBFILE     = BFILE
+# RAW_FPHENO = "%s/pheno/asdGWAS2015_females.pheno" % _DATA
+# RAW_FCOVAR = "<female-only .mds_cov in the male PC space>"   # restrict the joint mds_cov to females
+
 # ---------------------------------------------------------------------------
 # derived
 # ---------------------------------------------------------------------------
@@ -135,9 +220,11 @@ os.makedirs(OUT, exist_ok=True)
 os.makedirs(TMP, exist_ok=True)
 
 PCS       = ["PC%d" % i for i in range(1, NPC + 1)]
-BASE_COLS = ",".join(PCS + ["age"])
-INT_COLS  = ",".join(PCS + ["age", "Hap"] + ["%s_x_Hap" % p for p in PCS])
+_EXTRA    = [c.strip() for c in EXTRA_COVAR.split(",") if c.strip()]
+BASE_COLS = ",".join(PCS + _EXTRA)
+INT_COLS  = ",".join(PCS + _EXTRA + ["Hap"] + ["%s_x_Hap" % p for p in PCS])
 CAT       = ("--catCovarList %s" % CATCOVAR) if CATCOVAR else ""
+KEEP_IR   = "%s/keep_IR.txt" % OUT
 
 def _chroms(spec):
     """Parse "1-22" / "1,2,5-9" into a list of ints."""
@@ -157,52 +244,96 @@ defaults = {"account": ACCOUNT} if ACCOUNT else {}
 gwf = Workflow(defaults=defaults)
 
 # ---------------------------------------------------------------------------
+# Covariate prep (only when RAW_COVAR / RAW_FCOVAR is set): rename PCs + add the
+# dummy covariate columns the model needs but the raw file lacks. The prepped
+# files become BASECOVAR / FBASECOVAR for everything downstream.
+# ---------------------------------------------------------------------------
+def _prep_covar_cmd(raw, out):
+    return """
+{pixi} python {root}/scripts/prep_covar.py --raw-covar {raw} --npc {npc} \
+  --pc-prefix {pcp} --add-quant "{quant}" --add-cat "{cat}" --out {out}
+""".format(pixi=PIXI, root=ROOT, raw=raw, npc=NPC, pcp=PC_PREFIX,
+           quant=EXTRA_COVAR, cat=CATCOVAR, out=out)
+
+if RAW_COVAR:
+    BASECOVAR = "%s/base_covar.txt" % OUT
+    gwf.target("prep_covar", inputs=[RAW_COVAR], outputs=[BASECOVAR],
+               cores=1, memory="4g", walltime="00:10:00") \
+        << _prep_covar_cmd(RAW_COVAR, BASECOVAR)
+if RAW_FCOVAR:
+    FBASECOVAR = "%s/female_base_covar.txt" % OUT
+    gwf.target("prep_fcovar", inputs=[RAW_FCOVAR], outputs=[FBASECOVAR],
+               cores=1, memory="4g", walltime="00:10:00") \
+        << _prep_covar_cmd(RAW_FCOVAR, FBASECOVAR)
+
+def _prep_pheno_cmd(raw, out):
+    sel = ("--raw-col %s" % PHENO_RAW_COL if PHENO_HAS_HEADER
+           else "--no-header --value-col %d" % PHENO_VALUE_COL)
+    return """
+{pixi} python {root}/scripts/prep_pheno.py --raw-pheno {raw} \
+  --pheno-name {ph} {sel} --case {case} --control {ctrl} --out {out}
+""".format(pixi=PIXI, root=ROOT, raw=raw, ph=PHENONAME, sel=sel,
+           case=PHENO_CASE, ctrl=PHENO_CONTROL, out=out)
+
+if RAW_PHENO:
+    PHENO = "%s/pheno_recoded.txt" % OUT
+    gwf.target("prep_pheno", inputs=[RAW_PHENO], outputs=[PHENO],
+               cores=1, memory="4g", walltime="00:10:00") \
+        << _prep_pheno_cmd(RAW_PHENO, PHENO)
+if RAW_FPHENO:
+    FPHENO = "%s/female_pheno_recoded.txt" % OUT
+    gwf.target("prep_fpheno", inputs=[RAW_FPHENO], outputs=[FPHENO],
+               cores=1, memory="4g", walltime="00:10:00") \
+        << _prep_pheno_cmd(RAW_FPHENO, FPHENO)
+
+# ---------------------------------------------------------------------------
 # QC backbone for REGENIE step 1
 # ---------------------------------------------------------------------------
 gwf.target("qc",
-           inputs=["%s.bed" % BFILE],
+           inputs=["%s.bed" % BFILE, KEEP_IR],
            outputs=["%s/qc_pass.snplist" % OUT],
            cores=8, memory="16g", walltime="02:00:00") << """
-{pixi} plink2 --bfile {bfile} \
+{pixi} plink2 --bfile {bfile} --keep {keepir} \
   --maf 0.01 --mac 100 --geno 0.05 --hwe 1e-15 \
   --indep-pairwise 1000 100 0.9 \
   --out {out}/qc
 mv {out}/qc.prune.in {out}/qc_pass.snplist
-""".format(pixi=PIXI, bfile=BFILE, out=OUT)
+""".format(pixi=PIXI, bfile=BFILE, keepir=KEEP_IR, out=OUT)
 
 # ---------------------------------------------------------------------------
 # prep: strata keep-lists + interaction covariate file
 # ---------------------------------------------------------------------------
 gwf.target("strata",
            inputs=[HAPFILE],
-           outputs=["%s/keep_I.txt" % OUT, "%s/keep_R.txt" % OUT],
+           outputs=["%s/keep_I.txt" % OUT, "%s/keep_R.txt" % OUT, KEEP_IR],
            cores=1, memory="2g", walltime="00:10:00") << """
-{pixi} python {root}/scripts/make_strata.py --hap {hap} --out-prefix {out}
-""".format(pixi=PIXI, root=ROOT, hap=HAPFILE, out=OUT)
+{pixi} python {root}/scripts/make_strata.py --hap {hap} --hap-col {hapcol} --out-prefix {out}
+""".format(pixi=PIXI, root=ROOT, hap=HAPFILE, hapcol=HAPCOL, out=OUT)
 
 gwf.target("int_covars",
            inputs=[BASECOVAR, HAPFILE],
            outputs=["%s/int_covars.txt" % OUT],
            cores=1, memory="4g", walltime="00:10:00") << """
 {pixi} python {root}/scripts/make_interaction_covars.py \
-  --covar {covar} --hap {hap} --npc {npc} --out {out}/int_covars.txt
-""".format(pixi=PIXI, root=ROOT, covar=BASECOVAR, hap=HAPFILE, npc=NPC, out=OUT)
+  --covar {covar} --hap {hap} --hap-col {hapcol} --npc {npc} --out {out}/int_covars.txt
+""".format(pixi=PIXI, root=ROOT, covar=BASECOVAR, hap=HAPFILE, hapcol=HAPCOL,
+           npc=NPC, out=OUT)
 
 # ---------------------------------------------------------------------------
 # ARM A: full-sample step1 + interaction scan
 # ---------------------------------------------------------------------------
 gwf.target("step1_full",
-           inputs=["%s/qc_pass.snplist" % OUT],
+           inputs=["%s/qc_pass.snplist" % OUT, KEEP_IR, PHENO, BASECOVAR],
            outputs=["%s/step1_full_pred.list" % OUT],
            cores=16, memory="32g", walltime="24:00:00") << """
-{pixi} regenie --step 1 --bed {bfile} \
+{pixi} regenie --step 1 --bed {bfile} --keep {keepir} \
   --extract {out}/qc_pass.snplist \
   --phenoFile {pheno} --phenoColList {ph} \
   --covarFile {covar} --covarColList {base} {cat} \
   --bt --bsize 1000 --lowmem --lowmem-prefix {tmp}/step1_full \
   --threads 16 --out {out}/step1_full
-""".format(pixi=PIXI, bfile=BFILE, out=OUT, pheno=PHENO, ph=PHENONAME,
-           covar=BASECOVAR, base=BASE_COLS, cat=CAT, tmp=TMP)
+""".format(pixi=PIXI, bfile=BFILE, keepir=KEEP_IR, out=OUT, pheno=PHENO,
+           ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT, tmp=TMP)
 
 def _interaction_step2(chr_flag, out_prefix):
     return """
@@ -302,7 +433,7 @@ for s in ("I", "R"):
 
     if STRATUM_SPECIFIC_STEP1:
         gwf.target("step1_%s" % s,
-                   inputs=[keep, "%s/qc_pass.snplist" % OUT],
+                   inputs=[keep, "%s/qc_pass.snplist" % OUT, PHENO, BASECOVAR],
                    outputs=["%s/step1_%s_pred.list" % (OUT, s)],
                    cores=16, memory="32g", walltime="24:00:00") << """
 {pixi} regenie --step 1 --bed {bfile} --keep {keep} \
@@ -403,15 +534,16 @@ _X_H2 = bool(XBFILE and EUR_LD_X and HM3_X)
 if H2_POOLED or H2_PER_CHR:
     def _gwas_full_step2(chr_flag, out_prefix):
         return """
-{pixi} regenie --step 2 --bed {bfile} {chrflag} \
+{pixi} regenie --step 2 --bed {bfile} --keep {keepir} {chrflag} \
   --phenoFile {pheno} --phenoColList {ph} \
   --covarFile {covar} --covarColList {base} {cat} \
   --bt --firth --approx --pThresh 0.01 \
   --bsize 400 --minMAC 20 \
   --pred {out}/step1_full_pred.list \
   --threads 16 --out {outpref}
-""".format(pixi=PIXI, bfile=BFILE, chrflag=chr_flag, out=OUT, pheno=PHENO,
-           ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT, outpref=out_prefix)
+""".format(pixi=PIXI, bfile=BFILE, keepir=KEEP_IR, chrflag=chr_flag, out=OUT,
+           pheno=PHENO, ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT,
+           outpref=out_prefix)
 
     _GWF = "%s/gwas_full_%s.regenie" % (OUT, PHENONAME)
     if SPLIT_CHROMS:
@@ -419,7 +551,7 @@ if H2_POOLED or H2_PER_CHR:
         for _c in _chroms(SPLIT_CHROMS):
             _fc = "%s/gwas_full_chr%d_%s.regenie" % (OUT, _c, PHENONAME)
             gwf.target("gwas_full_chr%d" % _c,
-                       inputs=["%s/step1_full_pred.list" % OUT], outputs=[_fc],
+                       inputs=["%s/step1_full_pred.list" % OUT, KEEP_IR], outputs=[_fc],
                        cores=16, memory="32g", walltime="24:00:00") \
                 << _gwas_full_step2("--chr %d" % _c, "%s/gwas_full_chr%d" % (OUT, _c))
             _fchunks.append(_fc)
@@ -428,7 +560,7 @@ if H2_POOLED or H2_PER_CHR:
 {pixi} python {root}/scripts/concat_regenie.py --out {gw} --inputs {chunks}
 """.format(pixi=PIXI, root=ROOT, gw=_GWF, chunks=" ".join(_fchunks))
     else:
-        gwf.target("gwas_full", inputs=["%s/step1_full_pred.list" % OUT],
+        gwf.target("gwas_full", inputs=["%s/step1_full_pred.list" % OUT, KEEP_IR],
                    outputs=[_GWF], cores=16, memory="32g", walltime="24:00:00") \
             << _gwas_full_step2("", "%s/gwas_full" % OUT)
 
@@ -588,10 +720,11 @@ mv {out}/x_qc.snplist {out}/x_qc_pass.snplist
     # Only when an X LD reference + X merge-alleles list are supplied (_X_H2).
     if _X_H2:
         gwf.target("gwas_X_full",
-                   inputs=["%s/step1_full_pred.list" % OUT, "%s/x_qc_pass.snplist" % OUT],
+                   inputs=["%s/step1_full_pred.list" % OUT,
+                           "%s/x_qc_pass.snplist" % OUT, KEEP_IR],
                    outputs=["%s/gwas_X_full_%s.regenie" % (OUT, PHENONAME)],
                    cores=16, memory="32g", walltime="24:00:00") << """
-{pixi} regenie --step 2 --bed {xbfile} \
+{pixi} regenie --step 2 --bed {xbfile} --keep {keepir} \
   --chr 23 --extract {out}/x_qc_pass.snplist {xhemi} \
   --phenoFile {pheno} --phenoColList {ph} \
   --covarFile {covar} --covarColList {base} {cat} \
@@ -599,8 +732,8 @@ mv {out}/x_qc.snplist {out}/x_qc_pass.snplist
   --bsize 400 --minMAC 20 \
   --pred {out}/step1_full_pred.list \
   --threads 16 --out {out}/gwas_X_full
-""".format(pixi=PIXI, xbfile=XBFILE, xhemi=XHEMI, out=OUT, pheno=PHENO,
-           ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT)
+""".format(pixi=PIXI, xbfile=XBFILE, xhemi=XHEMI, keepir=KEEP_IR, out=OUT,
+           pheno=PHENO, ph=PHENONAME, covar=BASECOVAR, base=BASE_COLS, cat=CAT)
 
         gwf.target("munge_X_full",
                    inputs=["%s/gwas_X_full_%s.regenie" % (OUT, PHENONAME)],
@@ -659,7 +792,7 @@ if LAVA_LOCI:
            nperm=nperm, seed=seed, extra=extra, outpref=out_prefix)
 
     for nm, loc in _loci:
-        _li = ["%s/lava_pcs.eigenvec" % OUT, "%s.bed" % BFILE]
+        _li = ["%s/lava_pcs.eigenvec" % OUT, "%s.bed" % BFILE, PHENO]
         _lout = ["%s/lava_%s_loci.tsv" % (OUT, nm), "%s/lava_%s_summary.txt" % (OUT, nm)]
         if PERM_BATCHES > 1:
             _lb_nperm = max(1, LAVA_NPERM // PERM_BATCHES)
@@ -719,18 +852,18 @@ if LAVA_LOCI:
 # ---------------------------------------------------------------------------
 if FBFILE:
     gwf.target("female_pseudohap",
-               inputs=[HAPFILE, BASECOVAR, "%s.bed" % FBFILE],
+               inputs=[HAPFILE, BASECOVAR, FBASECOVAR, "%s.bed" % FBFILE],
                outputs=["%s/female_pseudohap.txt" % OUT],
                cores=1, memory="4g", walltime="00:10:00") << """
 {pixi} python {root}/scripts/assign_pseudo_hap.py \
-  --male-hap {hap} --male-covar {covar} --female-covar {fcovar} \
+  --male-hap {hap} --hap-col {hapcol} --male-covar {covar} --female-covar {fcovar} \
   --npc {npc} --out {out}/female_pseudohap.txt
-""".format(pixi=PIXI, root=ROOT, hap=HAPFILE, covar=BASECOVAR,
+""".format(pixi=PIXI, root=ROOT, hap=HAPFILE, hapcol=HAPCOL, covar=BASECOVAR,
            fcovar=FBASECOVAR, npc=NPC, out=OUT)
 
     gwf.target("female_negcontrol",
                inputs=["%s/top_interactions.tsv" % OUT,
-                       "%s/female_pseudohap.txt" % OUT, "%s.bed" % FBFILE],
+                       "%s/female_pseudohap.txt" % OUT, "%s.bed" % FBFILE, FPHENO],
                outputs=["%s/female_negative_control.tsv" % OUT,
                         "%s/female_lambda.txt" % OUT],
                cores=8, memory="16g", walltime="04:00:00") << """

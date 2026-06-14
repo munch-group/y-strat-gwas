@@ -216,6 +216,34 @@ def main():
                 "FID IID Hap".replace(" ", "\t"),
                 [(fid[i], iid[i], "I" if hap[i] == 1 else "R") for i in range(n)])
 
+    # ---- real-FORMAT variants (for tests/test_realformat.py) -------------
+    # Haplogroup file with extra columns, the haplogroup in col 6 named "Major",
+    # and ~15% of males relabelled to OTHER lineages that must be dropped.
+    other = ["E", "G", "J", "N", "Q", "T"]
+    major = ["I" if hap[i] == 1 else "R" for i in range(n)]
+    relabel = rng.choice(n, size=int(0.15 * n), replace=False)
+    for i in relabel:
+        major[i] = other[int(rng.integers(len(other)))]
+    write_table(os.path.join(a.out_dir, "haplogroup_major.txt"),
+                "\t".join(["FID", "IID", "PoP", "region", "sample", "Major", "QC"]),
+                [(fid[i], iid[i], "DK", "EUR", "s%d" % i, major[i], "pass")
+                 for i in range(n)])
+    # Covariate file in the awkward real format: FID IID SOL C1..C10 st1 (no age/batch).
+    cnames = ["C%d" % k for k in range(1, NPC + 1)]
+    write_table(os.path.join(a.out_dir, "raw_covariates.txt"),
+                "\t".join(["FID", "IID", "SOL"] + cnames + ["st1"]),
+                [tuple([fid[i], iid[i], 1]
+                       + ["%.5f" % pcs[i, k] for k in range(NPC)] + [0])
+                 for i in range(n)])
+    # Phenotype as a bare PLINK .pheno: HEADERLESS, "FID IID value", 1/2 coding
+    # (control=1, case=2; missing stays NA) -- mirrors the real asdGWAS2015.pheno,
+    # which has no header row. prep_pheno reads it with --no-header --value-col 3.
+    def _onetwo(v):
+        return "NA" if v == "NA" else (2 if int(v) == 1 else 1)
+    with open(os.path.join(a.out_dir, "raw_phenotypes.txt"), "w") as f:
+        for i in range(n):
+            f.write("%s\t%s\t%s\n" % (fid[i], iid[i], _onetwo(autism_str[i])))
+
     write_ldsc_reference(ref_dir, G, chrom, bp, snp_ids)
 
     # ---- females: negative control for the ancestry artefact -------------
@@ -264,6 +292,15 @@ def main():
                 [tuple([f_fid[i], f_iid[i]]
                        + ["%.5f" % f_pcs[i, k] for k in range(NPC)]
                        + [int(f_age[i]), int(f_batch[i])]) for i in range(nf)])
+    # raw real-format female files (headerless 1/2-coded .pheno, C-prefixed covar)
+    with open(os.path.join(a.out_dir, "raw_female_phenotypes.txt"), "w") as f:
+        for i in range(nf):
+            f.write("%s\t%s\t%s\n" % (f_fid[i], f_iid[i], 2 if f_autism[i] == 1 else 1))
+    write_table(os.path.join(a.out_dir, "raw_female_covariates.txt"),
+                "\t".join(["FID", "IID", "SOL"] + ["C%d" % k for k in range(1, NPC + 1)] + ["st1"]),
+                [tuple([f_fid[i], f_iid[i], 1]
+                       + ["%.5f" % f_pcs[i, k] for k in range(NPC)] + [0])
+                 for i in range(nf)])
 
     with open(os.path.join(a.out_dir, "truth.txt"), "w") as f:
         f.write("interaction_snp\t%s\n" % snp_ids[int_idx])

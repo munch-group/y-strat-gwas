@@ -81,6 +81,23 @@ Note on the gwf **local** backend: a fast-finishing wave of parallel jobs can le
 gather in `shouldrun` until the next `gwf run` (Slurm chains this via job dependencies);
 `run_via_gwf.sh` re-submits automatically when the DAG stalls.
 
+## Real-data input adapters (`test_realformat.py`)
+
+The generator also emits `haplogroup_major.txt` (haplogroup in a column named `Major`, with ~15%
+non-I/R males), `raw_covariates.txt` (`FID IID SOL C1..C10 st1`, with a header) and the
+**headerless** `raw_phenotypes.txt` (`FID IID value`, 1/2-coded) — mirroring the real iPSYCH
+file layouts. After the main test, run:
+
+```bash
+pixi run --manifest-path ./pixi.toml python tests/test_realformat.py
+```
+
+It checks `make_strata --hap-col Major` drops the non-I/R males (and emits `keep_IR`), `prep_covar`
+renames `C→PC` and adds dummy age/batch, `make_interaction_covars` restricts to I/R, `prep_pheno`
+recodes the **headerless** PLINK 1/2 `.pheno` → REGENIE 0/1 (`--no-header --value-col 3`), and that
+with the `RAW_*` env set the gwf graph orders the prep tasks **before** `step1_full` (the prepped
+files become `PHENO`/`BASECOVAR`).
+
 ## Notes / environment quirks handled here
 
 - Genotypes are generated as a VCF and imported with `plink2 --id-delim _` so the

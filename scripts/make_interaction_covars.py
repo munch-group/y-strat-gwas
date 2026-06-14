@@ -17,7 +17,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--covar", required=True,
                     help="base covariates: FID IID PC1..PCk age batch ...")
-    ap.add_argument("--hap", required=True, help="FID IID Hap (I/R)")
+    ap.add_argument("--hap", required=True, help="haplogroup file (FID IID ... <hap-col>)")
+    ap.add_argument("--hap-col", default="Hap", help="name of the haplogroup column")
     ap.add_argument("--npc", type=int, required=True,
                     help="number of PCs to interact with Hap")
     ap.add_argument("--out", required=True)
@@ -26,9 +27,10 @@ def main():
     cov = pd.read_csv(a.covar, sep=r"\s+", engine="python")
     hap = pd.read_csv(a.hap, sep=r"\s+", engine="python")
 
-    hap["Hap"] = (hap["Hap"].astype(str).str.upper().str.strip().map(HAP_CODE))
-    if hap["Hap"].isna().any():
-        sys.exit("Hap column contains values outside {I,R}")
+    # keep only I/R (others -- different lineages / missing -- are dropped)
+    hap["Hap"] = hap[a.hap_col].astype(str).str.upper().str.strip().map(HAP_CODE)
+    hap = hap.dropna(subset=["Hap"])
+    hap["Hap"] = hap["Hap"].astype(int)
 
     pcs = ["PC%d" % i for i in range(1, a.npc + 1)]
     missing = [c for c in pcs if c not in cov.columns]

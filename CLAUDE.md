@@ -38,6 +38,23 @@ editing, preserve those guards rather than "simplifying" them away:
 Coding convention enforced across all helpers: **Hap is I=1, R=0**. `ALLELE1`/`ALLELE0` are
 REGENIE's effect/non-effect alleles; REGENIE reports `LOG10P`, not `P` (helpers convert).
 
+**Real-data input adapters.** The haplogroup column is `HAPCOL` (default `Hap`; real data may call
+it `Major`); rows that aren't I or R are **dropped everywhere** — `strata` emits `keep_IR.txt` and
+the full-sample targets (`qc`, `step1_full`, `gwas_full`, `gwas_X_full`) carry `--keep keep_IR` so
+non-I/R males never enter (a no-op when the file is already I/R-only). For covariate files in the
+awkward real format (`FID IID SOL C1..C10 st1`, no age/batch), set `RAW_COVAR` (and `RAW_FCOVAR`
+for females): a `prep_covar` task renames `PC_PREFIX`→`PC` and adds the `EXTRA_COVAR`/`CATCOVAR`
+columns as dummies, producing the `BASECOVAR` the rest of the pipeline consumes. To drop age/batch
+instead of dummying them, set `EXTRA_COVAR=""` and `CATCOVAR=""`. For phenotypes in PLINK 1/2
+coding, set `RAW_PHENO` (+`RAW_FPHENO`) and a `prep_pheno` task maps `PHENO_CASE`→1 /
+`PHENO_CONTROL`→0 (else NA) — REGENIE `--bt` wants 0/1. Real `.pheno` files are typically
+**headerless** (`FID IID value`), so `prep_pheno` reads positionally by default
+(`PHENO_HAS_HEADER=False`, value at the 1-based `PHENO_VALUE_COL`, default 3); set
+`PHENO_HAS_HEADER=True` to instead select the column by name (`PHENO_RAW_COL`). The prepped files **become**
+`PHENO`/`BASECOVAR`/`FPHENO`/`FBASECOVAR`, so the entry-point targets (`step1_*`, `lava_perm`,
+`female_*`) list them as inputs to force the prep tasks to run first (a no-op when no prep is set —
+the real files are then plain external inputs).
+
 - **Ancestry-matched permutation** (`perm_interaction`, post-hoc to Arm A): the G-side guard
   REGENIE's `--interaction` can't add. It re-tests interaction hits against a null that permutes
   Hap **within Hap-propensity strata** — a real I-vs-R effect lives within strata and is broken
@@ -140,8 +157,10 @@ The helper scripts live in `scripts/` and `workflow.py` invokes them as `{ROOT}/
 
 | script | role |
 |--------|------|
-| `make_strata.py` | Hap file → per-stratum `keep_{I,R}.txt` for REGENIE `--keep` |
-| `make_interaction_covars.py` | base covars + Hap → `int_covars.txt` with `PC×Hap` products |
+| `make_strata.py` | Hap file (`--hap-col`, drops non-I/R) → `keep_{I,R}.txt` + `keep_IR.txt` |
+| `make_interaction_covars.py` | base covars + Hap (`--hap-col`, I/R only) → `int_covars.txt` with `PC×Hap` |
+| `prep_covar.py` | raw covar (`C1..Ck`, no age/batch) → `FID IID PC1..PCk age batch` (renames PCs, adds dummies) |
+| `prep_pheno.py` | recode a binary phenotype to REGENIE coding (`--case`→1, `--control`→0, else NA) |
 | `regenie_to_munge.py` | REGENIE step-2 → LDSC-munge-ready table (LOG10P→P, ALLELE1→A1) |
 | `top_interactions.py` | extract `ADD-INT_SNPxHap` rows, report λ_GC, dump top hits |
 | `parse_ldsc_rg.py` | print the genetic-correlation summary block from an `--rg` log |
@@ -178,6 +197,10 @@ asserts the negative control flags the confound SNP (reproduces in females) but 
 `workflow.py` or the helpers before a cluster run. `tests/test_parallel.py` (run after the main
 test) checks the two parallelisation features: chromosome-split step 2 + concat reproduces the
 unsplit scan **exactly**, and pooling permutation batches reproduces the single-job p-values.
+`tests/test_realformat.py` checks the real-data adapters on synthetic `Major`-column / `C`-prefixed
+files: `make_strata` drops non-I/R, `prep_covar` renames PCs + adds dummy age/batch, and
+`make_interaction_covars` restricts to I/R (the synthetic data emits `haplogroup_major.txt` +
+`raw_covariates.txt` for this).
 `tests/run_via_gwf.sh` runs the same data
 through the **real `gwf` local backend** (worker daemon) as a true cluster emulation — both paths
 are verified to complete all targets with correct results. The local backend needs

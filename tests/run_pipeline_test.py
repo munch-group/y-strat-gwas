@@ -140,7 +140,7 @@ def run_workflow_targets():
     import workflow as wf   # noqa: E402  (import after env is set, by design)
 
     # dependency order (mirrors README target graph)
-    order = ["qc", "strata", "int_covars",
+    order = ["strata", "qc", "int_covars",
              "step1_full", "interaction", "top_int", "perm_interaction",
              "step1_I", "gwas_I", "munge_I", "h2_I",
              "step1_R", "gwas_R", "munge_R", "h2_R",

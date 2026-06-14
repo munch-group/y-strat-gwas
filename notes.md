@@ -101,7 +101,7 @@ Two things can be meant by "homogeneous," and the distinction is the whole point
 
 Ancestry-homogeneous with respect to the I/R contrast = PCs no longer predict Hap. That's directly checkable: fit Hap ~ PC1..PCk (logistic) in the subset and require the PCs to be jointly near-uninformative — AUC ≈ 0.5, pseudo-R² ≈ 0, joint test non-significant. That metric is the definition, not a proxy for it.
 
-**How to get there (largest subset that satisfies it)**
+**How to get there (largest subset that satisfies it)**`
 
 1. Common support first. Drop the PC-space tails where only R (Steppe-rich) or only I (WHG-rich) exist — there's no one to compare against there anyway. Keep the overlap region.
 2. Match I to R on the top PCs within that overlap: nearest-neighbour/caliper matching on PC1..PCk, or propensity-score matching where the propensity is P(Hap=I | PCs). This balances the ancestry distribution between groups by construction and keeps the most samples.
