@@ -522,6 +522,11 @@ SAMP=$({pixi} python {root}/scripts/samp_prev.py \
 """.format(pixi=PIXI, root=ROOT, pheno=PHENO, ph=PHENONAME, keep=keep,
            ldsc=LDSCRUN, ldscdir=LDSC_DIR, out=OUT, s=s, eurld=EUR_LD, pop=PREV_POP)
 
+# --intercept-gencov 0: the I and R strata are DISJOINT individuals (keep_I /
+# keep_R partition the cohort), so the cross-trait LDSC sample overlap is zero and
+# the genetic-covariance intercept is known to be 0. Fixing it instead of fitting
+# it frees a parameter and tightens the gencov (hence rg) SE -- the rg analogue of
+# the zero sample-overlap matrix the LAVA arm already uses.
 gwf.target("rg",
            inputs=["%s/munged_I.sumstats.gz" % OUT, "%s/munged_R.sumstats.gz" % OUT],
            outputs=["%s/I_vs_R_rg.log" % OUT],
@@ -529,6 +534,7 @@ gwf.target("rg",
 {ldsc} {ldscdir}/ldsc.py \
   --rg {out}/munged_I.sumstats.gz,{out}/munged_R.sumstats.gz \
   --ref-ld-chr {eurld}/ --w-ld-chr {eurld}/ \
+  --intercept-gencov 0,0 \
   --out {out}/I_vs_R_rg
 {pixi} python {root}/scripts/parse_ldsc_rg.py --log {out}/I_vs_R_rg.log
 """.format(ldsc=LDSCRUN, ldscdir=LDSC_DIR, out=OUT, eurld=EUR_LD,
