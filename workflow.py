@@ -391,12 +391,12 @@ def _perm_cmd(nperm, gnperm, seed, extra, out_prefix):
     return """
 {pixi} python {root}/scripts/ancestry_matched_perm.py \
   --regenie {out}/gxhap_{ph}.regenie \
-  --bfile {bfile} --covar {covar} --hap {hap} \
+  --bfile {bfile} --covar {covar} --hap {hap} --hap-col-name {hap_col_name} \
   --pheno {pheno} --pheno-name {ph} --npc {npc} \
   --top {top} --panel {panel} --nperm {nperm} --global-nperm {gnperm} {force} \
   --seed {seed} --select-seed 1 {extra} --out-prefix {outpref}
 """.format(pixi=PIXI, root=ROOT, out=OUT, ph=PHENONAME, bfile=BFILE,
-           covar=BASECOVAR, hap=HAPFILE, pheno=PHENO, npc=NPC, top=PERM_TOP,
+           covar=BASECOVAR, hap=HAPFILE, hap_col_name=HAPCOL, pheno=PHENO, npc=NPC, top=PERM_TOP,
            panel=PERM_PANEL, nperm=nperm, gnperm=gnperm, force=_FORCE,
            seed=seed, extra=extra, outpref=out_prefix)
 

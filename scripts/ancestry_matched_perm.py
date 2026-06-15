@@ -185,6 +185,7 @@ def main():
     ap.add_argument("--bfile", required=True, help="plink1 prefix (.bed/.bim/.fam)")
     ap.add_argument("--covar", required=True)
     ap.add_argument("--hap", required=True)
+    ap.add_argument("--hap-col-name", default='Hap')
     ap.add_argument("--pheno", required=True)
     ap.add_argument("--pheno-name", required=True)
     ap.add_argument("--npc", type=int, required=True)
@@ -237,23 +238,23 @@ def main():
 
     cov = pd.read_csv(a.covar, sep=r"\s+", engine="python")
     hap = pd.read_csv(a.hap, sep=r"\s+", engine="python")
-    hap["Hap"] = hap["Hap"].astype(str).str.upper().str.strip().map({"I": 1, "R": 0})
+    hap[a.hap_col_name] = hap[a.hap_col_name].astype(str).str.upper().str.strip().map({"I": 1, "R": 0})
     phe = pd.read_csv(a.pheno, sep=r"\s+", engine="python")
     phe[a.pheno_name] = pd.to_numeric(phe[a.pheno_name], errors="coerce")
 
     df = (key.merge(cov, on=["FID", "IID"], how="left")
-             .merge(hap[["FID", "IID", "Hap"]], on=["FID", "IID"], how="left")
+             .merge(hap[["FID", "IID", a.hap_col_name]], on=["FID", "IID"], how="left")
              .merge(phe[["FID", "IID", a.pheno_name]], on=["FID", "IID"], how="left"))
 
     pcn = ["PC%d" % i for i in range(1, a.npc + 1)]
     extra = [c for c in ("age", "batch") if c in df.columns]
-    keep = df[a.pheno_name].isin([0, 1]) & df["Hap"].isin([0, 1])
+    keep = df[a.pheno_name].isin([0, 1]) & df[a.hap_col_name].isin([0, 1])
     keep &= df[pcn + extra].notna().all(axis=1)
     keep = keep.values
     print("samples used in permutation test: %d / %d" % (int(keep.sum()), n))
 
     y = df[a.pheno_name].values[keep].astype(float)
-    hapv = df["Hap"].values[keep].astype(float)
+    hapv = df[a.hap_col_name].values[keep].astype(float)
     pcs = df[pcn].values[keep].astype(float)
     cbase = np.column_stack([np.ones(keep.sum())]
                             + [df[c].values[keep].astype(float) for c in pcn + extra])
