@@ -50,6 +50,17 @@ def read_fam(path):
     return fam[0].astype(str).values, fam[1].astype(str).values
 
 
+def norm_ids(df, cols=("FID", "IID")):
+    """Force FID/IID to str before any merge. Real all-numeric IDs get inferred
+    as int64 by read_csv in one file and as str (via read_fam) elsewhere, and
+    pandas refuses to merge str against int64. Coercing both sides to str fixes
+    it (and is a no-op on the synthetic non-numeric IDs)."""
+    for c in cols:
+        if c in df.columns:
+            df[c] = df[c].astype(str)
+    return df
+
+
 def read_bim_index(path):
     bim = pd.read_csv(path, sep=r"\s+", header=None, engine="python")
     return {sid: i for i, sid in enumerate(bim[1].astype(str).values)}
@@ -242,6 +253,8 @@ def main():
     phe = pd.read_csv(a.pheno, sep=r"\s+", engine="python")
     phe[a.pheno_name] = pd.to_numeric(phe[a.pheno_name], errors="coerce")
 
+    for _d in (cov, hap, phe):
+        norm_ids(_d)
     df = (key.merge(cov, on=["FID", "IID"], how="left")
              .merge(hap[["FID", "IID", a.hap_col_name]], on=["FID", "IID"], how="left")
              .merge(phe[["FID", "IID", a.pheno_name]], on=["FID", "IID"], how="left"))

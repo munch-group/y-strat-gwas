@@ -144,6 +144,8 @@ def main():
     phe[a.pheno_name] = pd.to_numeric(phe[a.pheno_name], errors="coerce")
 
     pcn = ["PC%d" % i for i in range(1, a.npc + 1)]
+    for _d in (pcs_df, hap, phe):
+        amp.norm_ids(_d)
     df = (key.merge(pcs_df[["FID", "IID"] + pcn], on=["FID", "IID"], how="left")
              .merge(hap[["FID", "IID", "Hap"]], on=["FID", "IID"], how="left")
              .merge(phe[["FID", "IID", a.pheno_name]], on=["FID", "IID"], how="left"))

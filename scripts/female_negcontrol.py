@@ -71,6 +71,8 @@ def main():
     hap["Hap"] = hap["Hap"].astype(str).str.upper().str.strip().map({"I": 1, "R": 0})
     phe = pd.read_csv(a.fpheno, sep=r"\s+", engine="python")
     phe[a.pheno_name] = pd.to_numeric(phe[a.pheno_name], errors="coerce")
+    for _d in (cov, hap, phe):
+        amp.norm_ids(_d)
     df = (key.merge(cov, on=["FID", "IID"], how="left")
              .merge(hap[["FID", "IID", "Hap"]], on=["FID", "IID"], how="left")
              .merge(phe[["FID", "IID", a.pheno_name]], on=["FID", "IID"], how="left"))
