@@ -93,8 +93,10 @@ GENOME_BUILD = _env("GENOME_BUILD", "hg19")               # for REGENIE --par-re
 # LDSC reference data (download separately; see README). Defaults point at the
 # bundled synthetic reference -- swap EUR_LD/HM3 for the real 1000G EUR / HapMap3.
 LDSC_DIR  = _env("LDSC_DIR", "%s/ldsc" % ROOT)             # py3 LDSC fork, vendored + pip-installed by pixi
-EUR_LD    = _env("EUR_LD", "%s/tests/work/eur_w_ld_chr" % ROOT)   # EUR LD scores dir (synthetic ref)
-HM3       = _env("HM3", "%s/tests/work/data/w_hm3.snplist" % ROOT)  # HapMap3 SNP list for --merge-alleles
+# EUR_LD    = _env("EUR_LD", "%s/tests/work/eur_w_ld_chr" % ROOT)   # EUR LD scores dir (synthetic ref)
+EUR_LD    = _env("EUR_LD", "%s/ldsc/eas_ldscores" % ROOT)   # EUR LD scores dir (synthetic ref)
+# HM3       = _env("HM3", "%s/tests/work/data/w_hm3.snplist" % ROOT)  # HapMap3 SNP list for --merge-alleles
+HM3       = _env("HM3", "%s/ldsc/BBJ_HDLC22.txt" % ROOT)  # HapMap3 SNP list for --merge-alleles
 
 # liability-scale h2 (edit to your male-specific population prevalence)
 PREV_POP  = float(_env("PREV_POP", "0.03"))
