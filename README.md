@@ -10,9 +10,10 @@ Y-haplogroup **I** and **R**:
 - **Arm B — general pattern.** Main-effect GWAS within each stratum, then LDSC
   cross-stratum genetic correlation. **r_g significantly below 1 ⇒ pervasive
   G × haplogroup interaction.** Per-stratum SNP-h2 is reported too.
-- **LAVA (optional) — local pattern.** Local cross-stratum genetic correlation per
-  LD block (the local-resolution version of Arm B), paired with an ancestry-matched
-  permutation test + negative-control loci to deconfound focused per-locus claims.
+- **LAVA (optional) — local pattern.** A genome-wide screen of local cross-stratum
+  genetic correlation across ~2,500 LD blocks (the local-resolution version of Arm B),
+  whose nominated blocks are then deconfounded with an ancestry-matched permutation test
+  + negative-control loci.
 
 > **New here?** Read [`METHODS.md`](METHODS.md) first — a standalone guide to the
 > statistical ideas (ancestry confounding, Keller's interaction terms, cross-stratum
@@ -65,11 +66,16 @@ Zenodo) and set the paths in `workflow.py`:
 - `eur_w_ld_chr/` — 1000G EUR LD scores → `EUR_LD`
 - `w_hm3.snplist` — HapMap3 SNPs for `--merge-alleles` → `HM3`
 
-The **LAVA arm is optional** (disabled unless `LAVA_LOCI` is set). Its permutation /
-negative-control deconfounding (`lava_perm_*`) is pure Python and runs in the pixi env.
-The *headline* local r_g (`lava_local`) uses the **LAVA R package**, which is not in the
-pixi env — install it separately (e.g. `R -e 'remotes::install_github("josefin-werme/LAVA")'`),
-point `RSCRIPT` at that R, and supply a `LAVA_PARTITION` blocks file; only then is it built.
+The **LAVA arm has two stages, gated separately:**
+- **Headline genome-wide screen** (`lava_inputs` → `lava_local`) — the real **LAVA R
+  package** scans *all* ~2,500 LD blocks in `LAVA_PARTITION` (the
+  `blocks_s2500_..._hg19.locfile`) for local cross-stratum r_g → `lava_local_rg.tsv`.
+  LAVA is not in the pixi env: install it separately
+  (`R -e 'remotes::install_github("josefin-werme/LAVA")'`) and point `RSCRIPT` at that R.
+  Built whenever `LAVA_PARTITION` is set; runs independently of `LAVA_LOCI`.
+- **Per-block deconfounding** (`lava_perm_*`) — the ancestry-matched permutation /
+  negative-control layer, **pure Python** in the pixi env. Built per block you list in
+  `LAVA_LOCI` (the screen's nominees) to deconfound it.
 
 ## Configure & run
 
@@ -79,8 +85,9 @@ data** (`tests/work/data`) so the workflow runs out of the box once that data is
 match. **Edit the CONFIG block to point at your real data** (`BFILE`, `PHENO`,
 `BASECOVAR`, `HAPFILE`, `EUR_LD`, `HM3`, `NPC`, `PREV_POP`, `ACCOUNT`, …) and clear
 `ENV_PREFIX` for a real cluster run. To enable the chrX analysis set `XBFILE` (and
-`GENOME_BUILD`, default `hg38`); to enable the LAVA arm set `LAVA_LOCI`
-(e.g. `HCN1=5:45300000-45700000`); `XBFILE`/`LAVA_LOCI` are empty (skipped) by default. The
+`GENOME_BUILD`, default `hg38`); for the LAVA genome-wide screen set `LAVA_PARTITION`
+(+ `RSCRIPT`), and to deconfound specific blocks set `LAVA_LOCI`
+(e.g. `HCN1=5:45300000-45700000`); `XBFILE` is empty (skipped) by default. The
 females negative control runs **by default** (`FBFILE`/`FPHENO`/`FBASECOVAR` default to the
 synthetic female data, like the male inputs — swap them for your real female files, with the
 female PCs in the same PC space as the males; set `FBFILE=""` to skip the arm).
@@ -136,8 +143,9 @@ Target graph: `qc`, `strata`, `int_covars` → `step1_full` →
 `gwas_{I,R}` → `munge_{I,R}` → `h2_{I,R}`, `rg`. With `XBFILE` set, the chrX arm
 adds `xqc` → `interaction_X` → `top_int_X` (reusing `step1_full`) and per stratum
 `gwas_X_{I,R}` → `xforldsc_{I,R}` (reusing the autosomal step-1 predictors). With
-`LAVA_LOCI` set, the LAVA arm adds `lava_pcs` → `lava_perm_<name>` (deconfounding) and,
-if `LAVA_PARTITION` is also set, `lava_inputs` → `lava_local` (headline local r_g in R).
+`LAVA_PARTITION` set, the LAVA arm adds `lava_inputs` → `lava_local` (the genome-wide
+headline local-r_g screen in R); independently, with `LAVA_LOCI` set it adds
+`lava_pcs` → `lava_perm_<name>` (per-block deconfounding of the screen's nominees).
 
 ## Reading the results
 
@@ -161,10 +169,13 @@ applies to both `results/` and the test's `tests/work/results/`). The key files 
 - `results/female_negative_control.tsv` — *(with `FBFILE`)* each male interaction hit re-tested in
   females (no Y): `looks_like_ancestry_artifact = True` ⇒ the hit reproduces in a no-Y group ⇒ it's
   ancestry, not Y. A null is only *consistent* with Y-causation (autism is sex-differential).
-- `results/lava_<name>_summary.txt` + `_loci.tsv` — per-locus **local** cross-stratum
-  r_g with its **ancestry-matched** empirical p and its position in the negative-control
-  distribution (`target_vs_controls_tail_frac` — small ⇒ stands out from controls). The
-  headline LAVA estimate, if you ran the R step, is in `results/lava_local_rg.tsv`.
+- `results/lava_local_rg.tsv` — *(with `LAVA_PARTITION` + R)* the genome-wide **headline
+  screen**: local cross-stratum r_g (`rho`) for every LD block; low `rho` / `rho.upper < 1`
+  ⇒ a candidate divergence to follow up.
+- `results/lava_<name>_summary.txt` + `_loci.tsv` — *(with `LAVA_LOCI`)* per-block **local**
+  cross-stratum r_g with its **ancestry-matched** empirical p and its position in the
+  negative-control distribution (`target_vs_controls_tail_frac` — small ⇒ stands out from
+  controls) — the deconfounded follow-up of a screen nominee.
 - `results/top_interactions_X.tsv` — strongest chrX SNP×Hap signals (if `XBFILE` set).
 - `results/gwas_X_{I,R}.forldsc.txt` — per-stratum chrX summary stats in LDSC-munge-ready
   form. Running LDSC h2/rg on chrX additionally needs an X-chromosome LD-score reference and

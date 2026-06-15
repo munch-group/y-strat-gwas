@@ -79,7 +79,7 @@ PERM_FORCE_SNPS   = _env("PERM_FORCE_SNPS", "")       # comma-sep SNP IDs to alw
 # to enable; empty disables. Format: "name=chr:start-end,name2=chr:start-end".
 LAVA_LOCI       = _env("LAVA_LOCI", "")  # "" disables LAVA; synthetic: realblock=20:9988-2241939,confblock=21:8710-2271328
 LAVA_REF        = _env("LAVA_REF", BFILE)             # plink ref for in-sample LD
-LAVA_PARTITION  = _env("LAVA_PARTITION", "")          # LAVA blocks file (R headline only)
+LAVA_PARTITION  = _env("LAVA_PARTITION", "lava_meta/blocks_s2500_m25_f1_w200.GRCh37_hg19.locfile")          # LAVA blocks file (R headline only)
 LAVA_N_CONTROLS = int(_env("LAVA_N_CONTROLS", "300")) # negative-control loci
 LAVA_NPERM      = int(_env("LAVA_NPERM", "10000"))    # permutations per locus
 RSCRIPT         = _env("RSCRIPT", "Rscript")          # for the LAVA R step
@@ -213,6 +213,12 @@ FBFILE     = ""
 # ---------------------------------------------------------------------------
 # derived
 # ---------------------------------------------------------------------------
+# LAVA_REF defaults to BFILE, but BFILE may have been reassigned by the REAL DATA
+# block above *after* the LAVA_REF default was first bound -- re-bind it to the
+# final BFILE unless the user set it explicitly (YS_LAVA_REF).
+if not os.environ.get("YS_LAVA_REF"):
+    LAVA_REF = BFILE
+
 PIXI    = ("%s " % ENV_PREFIX if ENV_PREFIX else "") \
           + "pixi run --manifest-path %s/pixi.toml" % ROOT
 LDSCRUN = "%s python" % PIXI                   # py3 LDSC fork, pip-installed by pixi postinstall
@@ -818,32 +824,39 @@ if LAVA_LOCI:
                        cores=8, memory="16g", walltime="12:00:00") \
                 << _lava_cmd(nm, loc, LAVA_NPERM, 1, "", "%s/lava_%s" % (OUT, nm))
 
-    # Optional headline: real LAVA local r_g via the R package. Built only when a
-    # LAVA partition file is supplied; the R step runs outside the pixi env.
-    if LAVA_PARTITION:
-        gwf.target("lava_inputs",
-                   inputs=["%s/munged_I.sumstats.gz" % OUT,
-                           "%s/munged_R.sumstats.gz" % OUT],
-                   outputs=["%s/lava_input.info" % OUT,
-                            "%s/lava_sample_overlap.txt" % OUT,
-                            "%s/lava_loci.tsv" % OUT],
-                   cores=1, memory="4g", walltime="00:30:00") << """
+# ---------------------------------------------------------------------------
+# Headline LAVA local r_g via the real LAVA R package (runs OUTSIDE the pixi env,
+# through RSCRIPT). Gated on LAVA_PARTITION: the genome-wide LD-block file
+# (LAVA's blocks_s2500_m25_f1_w200.GRCh37_hg19.locfile -- columns
+# "LOC CHR START STOP", positions in the GENOTYPE BUILD, hg19 here) is scanned
+# directly, so this is a genome-wide screen INDEPENDENT of LAVA_LOCI. Follow up
+# any block of interest with its ancestry-matched deconfounding by listing that
+# block in LAVA_LOCI (-> lava_perm_<name>). Consumes Arm B's per-stratum
+# sumstats, so it runs after munge_{I,R}.
+# ---------------------------------------------------------------------------
+if LAVA_PARTITION:
+    gwf.target("lava_inputs",
+               inputs=["%s/munged_I.sumstats.gz" % OUT,
+                       "%s/munged_R.sumstats.gz" % OUT],
+               outputs=["%s/lava_input.info" % OUT,
+                        "%s/lava_sample_overlap.txt" % OUT],
+               cores=1, memory="4g", walltime="00:30:00") << """
 {pixi} python {root}/scripts/lava_inputs.py \
   --pheno {pheno} --pheno-name {ph} \
   --keep-i {out}/keep_I.txt --keep-r {out}/keep_R.txt \
   --sumstats-i {out}/gwas_I.forldsc.txt --sumstats-r {out}/gwas_R.forldsc.txt \
-  --loci "{loci}" --out-prefix {out}/lava
-""".format(pixi=PIXI, root=ROOT, pheno=PHENO, ph=PHENONAME, out=OUT,
-           loci=LAVA_LOCI)
+  --out-prefix {out}/lava
+""".format(pixi=PIXI, root=ROOT, pheno=PHENO, ph=PHENONAME, out=OUT)
 
-        gwf.target("lava_local",
-                   inputs=["%s/lava_input.info" % OUT, "%s/lava_loci.tsv" % OUT],
-                   outputs=["%s/lava_local_rg.tsv" % OUT],
-                   cores=4, memory="16g", walltime="04:00:00") << """
+    gwf.target("lava_local",
+               inputs=["%s/lava_input.info" % OUT, LAVA_PARTITION],
+               outputs=["%s/lava_local_rg.tsv" % OUT],
+               cores=4, memory="32g", walltime="24:00:00") << """
 {rscript} {root}/scripts/lava_local.R \
   {out}/lava_input.info {out}/lava_sample_overlap.txt {ref} \
-  {out}/lava_loci.tsv {out}/lava_local_rg.tsv
-""".format(rscript=RSCRIPT, root=ROOT, out=OUT, ref=LAVA_REF)
+  {partition} {out}/lava_local_rg.tsv
+""".format(rscript=RSCRIPT, root=ROOT, out=OUT, ref=LAVA_REF,
+           partition=LAVA_PARTITION)
 
 # ---------------------------------------------------------------------------
 # Females-as-negative-control (optional; only built when FBFILE is set). Females

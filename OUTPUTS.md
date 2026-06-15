@@ -121,34 +121,60 @@ supply (not wired here).
 
 ---
 
-## LAVA — local cross-stratum r_g (when `LAVA_LOCI` is set)
+## LAVA — local cross-stratum r_g
 
-One set of files per configured locus, named by its label, e.g. `lava_<name>_*`.
+LAVA runs in **two stages** (`METHODS.md` §7): a **genome-wide screen** (R, the headline)
+that *nominates* blocks, then a **per-block deconfounding** (Python) for the blocks you
+follow up. The screen is an effect-size landscape blind to ancestry; the deconfounding is
+what makes a hit defensible.
 
-**`lava_<name>_summary.txt`** — the headline for that locus (`key<TAB>value`):
+### Genome-wide screen — `lava_local_rg.tsv` (when `LAVA_PARTITION` is set)
+
+The headline local `r_g` from the real **LAVA R package**, **one row per LD block** in the
+partition file (`blocks_s2500_m25_f1_w200.GRCh37_hg19.locfile`, ~2,500 blocks). Built by
+`lava_inputs` → `lava_local`; needs R + the LAVA package (point `RSCRIPT` at it). Columns are
+LAVA's bivariate output plus the block coordinates:
+
+| column | meaning |
+|--------|---------|
+| `locus`, `chr`, `start`, `stop` | the LD block (coordinates in the genotype build, hg19) |
+| `phen1`, `phen2` | the two strata correlated (`I`, `R`) |
+| **`rho`** | **local cross-stratum genetic correlation** for the block — the headline; **well below 1, or sign-flipped, ⇒ the genetic architecture diverges between haplogroups here** |
+| `rho.lower`, `rho.upper` | 95% CI for `rho` — a divergence candidate has `rho.upper` clearly **< 1** |
+| `r2`, `p` | local explained correlation, and LAVA's p for `rho ≠ 0` |
+
+> **Read `rho`, not `p`, for divergence.** LAVA's `p` tests `rho ≠ 0` (is there *any* local
+> correlation); the I-vs-R question is whether `rho` is *below 1*. Nominate blocks by low
+> `rho` / `rho.upper < 1`. Blocks with too few SNPs or no univariate signal are **silently
+> dropped** by LAVA, so absence is not `rho = 1`. This screen does **not** deconfound —
+> every nominee must go through the per-block stage below before you believe it.
+
+### Per-block deconfounding — `lava_<name>_*` (when `LAVA_LOCI` is set)
+
+One set of files per block you listed in `LAVA_LOCI` (the screen's nominees), named by its
+label. This is the ancestry-matched permutation + negative-control panel.
+
+**`lava_<name>_summary.txt`** — the headline for that block (`key<TAB>value`):
 
 | key | meaning |
 |-----|---------|
-| `target_local_rg` | local cross-stratum genetic correlation at the locus (sign matters) |
+| `target_local_rg` | local cross-stratum genetic correlation at the block (sign matters) |
 | **`target_anc_matched_p`** | ancestry-matched empirical p (small ⇒ survives the null) |
-| **`target_vs_controls_tail_frac`** | where the locus sits among SNP-count-matched **negative-control** blocks — **small ⇒ it stands out** from the genome-wide background |
+| **`target_vs_controls_tail_frac`** | where the block sits among SNP-count-matched **negative-control** blocks — **small ⇒ it stands out** from the genome-wide background |
 | `control_local_rg_mean`, `control_p_median` | the control panel's centre |
 | `strata_mean_size`, `within_stratum_HapPC_AUC` | the strata used |
 
-A locus is interesting only when **both** its `anc_matched_p` is small **and** its
+A block is interesting only when **both** its `anc_matched_p` is small **and** its
 `tail_frac` is small — otherwise residual structure depresses local `rg` everywhere (see
-`METHODS.md` §7). Same global-PC ceiling as Arm A.
+`METHODS.md` §7). Same global-PC ceiling as Arm A. **Pair it with the screen:** the
+`lava_local_rg.tsv` `rho` is the effect size, this `anc_matched_p` is the deconfounded
+significance.
 
 **`lava_<name>_loci.tsv`** — the target row (`is_target=True`) plus every negative-control block,
 each with `local_rg` and `anc_matched_emp_p`, so you can see the distribution behind the tail
 fraction.
 
 **`lava_<name>_strata_selection.tsv`** — the strata tightening curve, as in Arm A.
-
-**`lava_local_rg.tsv`** — *only if you ran the optional LAVA R step* (`LAVA_PARTITION` set): the
-**headline** local `rg` from the real LAVA package. Pair every locus here with its
-`lava_<name>_summary.txt` permutation p — the R estimate is the effect size, the permutation p is
-the deconfounded significance.
 
 ---
 
@@ -183,8 +209,9 @@ SNP×pseudo-Hap scan). `female_pseudohap.txt` is the female pseudo-haplogroup as
   significant **and** `perm_interactions.tsv` `anc_matched_emp_p` small. Even then: provisional
   (global-PC ceiling) → confirm with local ancestry / replication.
 - **Does haplogroup reshape the architecture overall?** `I_vs_R_rg.log`: `rg` significantly < 1.
-- **Does a candidate region diverge locally?** `lava_<name>_summary.txt`: small `target_anc_matched_p`
-  **and** small `target_vs_controls_tail_frac`.
+- **Does a region diverge locally?** Two steps: screen `lava_local_rg.tsv` for blocks with `rho`
+  well below 1 (`rho.upper < 1`), then deconfound each nominee — `lava_<name>_summary.txt` with
+  small `target_anc_matched_p` **and** small `target_vs_controls_tail_frac`.
 - **Is a surviving interaction hit actually ancestry?** `female_negative_control.tsv`: if it's
   flagged (`looks_like_ancestry_artifact`), yes — kill it.
 

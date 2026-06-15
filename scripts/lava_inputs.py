@@ -27,7 +27,9 @@ def main():
     ap.add_argument("--keep-r", required=True)
     ap.add_argument("--sumstats-i", required=True)
     ap.add_argument("--sumstats-r", required=True)
-    ap.add_argument("--loci", required=True, help="name=chr:start-end,name2=...")
+    ap.add_argument("--loci", default="",
+                    help="name=chr:start-end,name2=...; omit for a genome-wide "
+                         "scan that reads a ready-made LAVA locus/partition file")
     ap.add_argument("--out-prefix", required=True)
     a = ap.parse_args()
 
@@ -43,18 +45,25 @@ def main():
     with open(a.out_prefix + "_sample_overlap.txt", "w") as f:
         f.write("I R\n1 0\n0 1\n")
 
-    with open(a.out_prefix + "_loci.tsv", "w") as f:
-        f.write("LOC\tCHR\tSTART\tSTOP\n")
-        for ent in a.loci.split(","):
-            if "=" not in ent:
-                continue
-            nm, loc = ent.split("=", 1)
-            chrom, rng = loc.split(":")
-            lo, hi = rng.split("-")
-            f.write("%s\t%s\t%s\t%s\n" % (nm.strip(), chrom.strip(),
-                                          lo.strip(), hi.strip()))
-    print("wrote LAVA inputs: %s_{input.info,sample_overlap.txt,loci.tsv}"
-          % a.out_prefix)
+    # Only build a locus file from an inline --loci string. For a genome-wide
+    # scan the caller passes LAVA's ready-made partition file straight to the R
+    # step instead, so no _loci.tsv is needed here.
+    if a.loci:
+        with open(a.out_prefix + "_loci.tsv", "w") as f:
+            f.write("LOC\tCHR\tSTART\tSTOP\n")
+            for ent in a.loci.split(","):
+                if "=" not in ent:
+                    continue
+                nm, loc = ent.split("=", 1)
+                chrom, rng = loc.split(":")
+                lo, hi = rng.split("-")
+                f.write("%s\t%s\t%s\t%s\n" % (nm.strip(), chrom.strip(),
+                                              lo.strip(), hi.strip()))
+        print("wrote LAVA inputs: %s_{input.info,sample_overlap.txt,loci.tsv}"
+              % a.out_prefix)
+    else:
+        print("wrote LAVA inputs: %s_{input.info,sample_overlap.txt}"
+              % a.out_prefix)
 
 
 if __name__ == "__main__":

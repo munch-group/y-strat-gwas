@@ -24,7 +24,8 @@ on* which Y-haplogroup a man carries. Two flavours of the question:
   whole — i.e. is there *pervasive*, polygenic genotype × haplogroup interaction,
   even if no single variant reaches significance? This is asked at two resolutions:
   one genome-wide number (cross-stratum genetic correlation) and one per LD block
-  (local genetic correlation, for following up a specific region).
+  (local genetic correlation, scanned genome-wide across ~2,500 blocks to nominate
+  diverging regions for follow-up).
 
 These map onto the pipeline's analysis arms below — the individual-variant scan
 (Arm A, Section 3), the genome-wide architecture readout (Arm B, Section 4) and its
@@ -409,9 +410,21 @@ whole genome* is precisely the fingerprint of residual structure. So a focused
 local-`r_g` claim needs the same deconfounding as a single-variant hit — and one
 addition.
 
-The pipeline pairs the **headline LAVA estimate** (the canonical R tool, run on the
-per-stratum summary statistics) with a **deconfounding layer** that mirrors Section 6
-and extends it:
+The pipeline runs LAVA in **two stages — a genome-wide screen, then targeted
+deconfounding**:
+
+**1. Genome-wide screen (the headline).** The canonical LAVA R tool is run across the
+full partition of ~2,500 LD blocks — `LAVA_PARTITION`, the standard
+`blocks_s2500_m25_f1_w200.GRCh37_hg19.locfile` (columns `LOC CHR START STOP`, positions
+in the *genotype build*, hg19 here) — treating ASD-in-I and ASD-in-R as two traits and
+returning a local `r_g` for **every** block (`lava_local_rg.tsv`). This step is *blind*
+to ancestry: it is the effect-size landscape, not evidence, and exists to **nominate**
+blocks whose local `r_g` falls well below 1 or flips sign. It runs independently of
+`LAVA_LOCI`.
+
+**2. Targeted deconfounding (per nominated block).** List each nominated block in
+`LAVA_LOCI`; that triggers a pure-Python **deconfounding layer** (no R) that mirrors
+Section 6 and extends it:
 
 - **Same ancestry-matched permutation.** A local statistic — an LD-aware cross-stratum
   correlation of the per-stratum block betas, `T = bᵢ'R bᵣ / √(bᵢ'R bᵢ · bᵣ'R bᵣ)`,
@@ -469,8 +482,8 @@ to autosomal ones.
 | Propensity stratification + AUC tightening rule | `ancestry_matched_perm.py` → `perm_strata_selection.tsv` |
 | Genome-wide λ vs permutation null | `perm_lambda.txt` |
 | Cross-stratum genetic correlation `r_g` | `gwas_{I,R}` → `munge_{I,R}` → `rg` (LDSC) |
-| Local cross-stratum `r_g` (headline) | `lava_inputs` → `lava_local` (LAVA, R) |
-| Local-`r_g` deconfounding + negative controls | `lava_perm_<name>` / `local_rg_perm.py` |
+| Local cross-stratum `r_g` (headline, genome-wide screen) | `lava_inputs` → `lava_local` (LAVA, R) over all `LAVA_PARTITION` blocks |
+| Local-`r_g` deconfounding + negative controls (per nominated block) | `lava_perm_<name>` / `local_rg_perm.py`, driven by `LAVA_LOCI` |
 | Region-excluded PCs (anti-circularity) | `lava_pcs` (PCA with the locus chromosome dropped) |
 | Per-stratum liability-scale `h2` (samp+pop prev) | `h2_{I,R}` / `samp_prev.py` |
 | Stratified vs pooled `h2` | `gwas_full` → `h2_full`, tabulated in `h2_by_stratification.tsv` (`collect_h2.py`) |
