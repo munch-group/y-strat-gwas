@@ -409,7 +409,7 @@ if PERM_BATCHES > 1:
         _cp = "%s/perm_b%d_counts.tsv" % (OUT, _k)
         _lp = "%s/perm_b%d_lambda_null.tsv" % (OUT, _k)
         gwf.target("perm_interaction_batch%d" % _k, inputs=_PERM_INPUTS,
-                   outputs=[_cp, _lp], cores=8, memory="16g", walltime="08:00:00") \
+                   outputs=[_cp, _lp], cores=8, memory="64g", walltime="08:00:00") \
             << _perm_cmd(_pb_nperm, _pb_gnperm, _k + 1, "--raw-counts",
                          "%s/perm_b%d" % (OUT, _k))
         _pcounts.append(_cp)
