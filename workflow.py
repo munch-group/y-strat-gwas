@@ -374,7 +374,7 @@ else:
 gwf.target("top_int",
            inputs=["%s/gxhap_%s.regenie" % (OUT, PHENONAME)],
            outputs=["%s/top_interactions.tsv" % OUT],
-           cores=2, memory="8g", walltime="00:30:00") << """
+           cores=2, memory="24g", walltime="02:00:00") << """
 {pixi} python {root}/scripts/top_interactions.py \
   --regenie {out}/gxhap_{ph}.regenie --out {out}/top_interactions.tsv
 """.format(pixi=PIXI, root=ROOT, out=OUT, ph=PHENONAME)
@@ -583,7 +583,7 @@ if H2_POOLED:
     gwf.target("h2_full",
                inputs=["%s/munged_full.sumstats.gz" % OUT],
                outputs=["%s/h2_full.log" % OUT],
-               cores=2, memory="8g", walltime="00:30:00") << """
+               cores=2, memory="24g", walltime="02:00:00") << """
 SAMP=$({pixi} python {root}/scripts/samp_prev.py --pheno {pheno} --pheno-name {ph})
 {ldsc} {ldscdir}/ldsc.py \
   --h2 {out}/munged_full.sumstats.gz \
@@ -596,7 +596,7 @@ SAMP=$({pixi} python {root}/scripts/samp_prev.py --pheno {pheno} --pheno-name {p
     gwf.target("h2_by_stratification",
                inputs=["%s/h2_full.log" % OUT, "%s/h2_I.log" % OUT, "%s/h2_R.log" % OUT],
                outputs=["%s/h2_by_stratification.tsv" % OUT],
-               cores=1, memory="2g", walltime="00:10:00") << """
+               cores=1, memory="25g", walltime="2:00:00") << """
 {pixi} python {root}/scripts/collect_h2.py \
   --logs {out}/h2_full.log {out}/h2_I.log {out}/h2_R.log \
   --labels pooled I R --label-col stratification \
