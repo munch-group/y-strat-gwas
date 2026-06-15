@@ -374,7 +374,7 @@ else:
 gwf.target("top_int",
            inputs=["%s/gxhap_%s.regenie" % (OUT, PHENONAME)],
            outputs=["%s/top_interactions.tsv" % OUT],
-           cores=2, memory="24g", walltime="02:00:00") << """
+           cores=2, memory="64g", walltime="02:00:00") << """
 {pixi} python {root}/scripts/top_interactions.py \
   --regenie {out}/gxhap_{ph}.regenie --out {out}/top_interactions.tsv
 """.format(pixi=PIXI, root=ROOT, out=OUT, ph=PHENONAME)
