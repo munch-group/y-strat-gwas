@@ -569,7 +569,7 @@ if H2_POOLED or H2_PER_CHR:
 
     gwf.target("munge_full",
                inputs=[_GWF], outputs=["%s/munged_full.sumstats.gz" % OUT],
-               cores=2, memory="8g", walltime="01:00:00") << """
+               cores=2, memory="24g", walltime="05:00:00") << """
 {pixi} python {root}/scripts/regenie_to_munge.py \
   --regenie {gw} --out {out}/gwas_full.forldsc.txt
 {ldsc} {ldscdir}/munge_sumstats.py \
