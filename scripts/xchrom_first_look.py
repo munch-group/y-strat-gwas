@@ -82,6 +82,20 @@ def load_chi2(path, test_label, min_maf, chunksize=2_000_000):
     use_maf = min_maf > 0 and "A1FREQ" in cols
     usecols = ["TEST", "LOG10P"] + (["A1FREQ"] if use_maf else [])
 
+    # FAIL FAST on a wrong TEST label: REGENIE writes every TEST row for a variant
+    # consecutively, so the first handful of variants already contain all labels.
+    # Without this, a label typo / version mismatch reads the WHOLE multi-GB file
+    # before discovering zero matches -- looks like a slow silent hang.
+    peek = pd.read_csv(path, sep=r"\s+", engine="c", comment="#",
+                       usecols=["TEST"], nrows=2000)
+    labels = sorted(peek["TEST"].dropna().unique().tolist())
+    if test_label not in labels:
+        raise SystemExit(
+            "ERROR: interaction TEST=%s is not in %s.\n  available labels: %s\n"
+            "  The SNPxHap interaction row is usually the 'ADD-INT_SNPx...' one;\n"
+            "  the label varies by REGENIE version -- rerun with --test <label>."
+            % (test_label, path, labels))
+
     p_parts, maf_dropped, seen = [], 0, set()
     reader = pd.read_csv(path, sep=r"\s+", engine="c", comment="#",
                          usecols=usecols, chunksize=chunksize)
@@ -150,8 +164,17 @@ def main():
     auto_path = _find(a.results_dir, a.pheno, "gxhap", a.auto)
     x_path = _find(a.results_dir, a.pheno, "gxhapX", a.x)
 
+    def _log(msg):
+        print("[xchrom] %s" % msg, file=sys.stderr, flush=True)
+
+    _log("autosomal scan : %s" % auto_path)
+    _log("chrX scan      : %s" % x_path)
+    _log("reading autosomal scan (whole-genome file -- this is the slow step) ...")
     c_auto, n_auto, drop_auto, p_auto = load_chi2(auto_path, a.test, a.min_maf)
+    _log("  %d interaction rows on the autosome" % n_auto)
+    _log("reading chrX scan ...")
     c_x, n_x, drop_x, p_x = load_chi2(x_path, a.test, a.min_maf)
+    _log("  %d interaction rows on chrX" % n_x)
     A = summarize(c_auto, p_auto)
     X = summarize(c_x, p_x)
 
