@@ -61,36 +61,54 @@ def _find(results_dir, pheno, prefix, explicit):
     return hits[0] if hits else cand  # return cand so the error message is informative
 
 
-def load_chi2(path, test_label, min_maf):
-    """Return (chi2 array, n_raw, maf_dropped) for the interaction TEST rows."""
+def load_chi2(path, test_label, min_maf, chunksize=2_000_000):
+    """Return (chi2 array, n, maf_dropped, p array) for the interaction TEST rows.
+
+    Reads only TEST/LOG10P(/A1FREQ) with the C engine, in chunks, so peak memory
+    is bounded by one chunk regardless of how big the genome-wide scan is. (The
+    naive full-frame read with engine='python' uses tens of GB on a real scan --
+    millions of rows x ~4 TEST labels per variant x 13 object columns.)
+    """
     if not os.path.exists(path):
         raise SystemExit(
             "ERROR: scan not found: %s\n"
             "  (autosomal scan = target `interaction`; chrX scan = target "
             "`interaction_X`, which needs XBFILE set and the chrX arm run.)" % path)
-    df = pd.read_csv(path, sep=r"\s+", engine="python", comment="#")
-    if "TEST" not in df.columns:
-        raise SystemExit("ERROR: no TEST column in %s -- is this an --interaction output?" % path)
-    sub = df[df["TEST"] == test_label].copy()
-    if sub.empty:
-        avail = sorted(df["TEST"].dropna().unique())
+    head = pd.read_csv(path, sep=r"\s+", engine="c", comment="#", nrows=0)
+    cols = list(head.columns)
+    if "TEST" not in cols or "LOG10P" not in cols:
+        raise SystemExit(
+            "ERROR: %s lacks TEST/LOG10P columns -- is this a REGENIE --interaction output?" % path)
+    use_maf = min_maf > 0 and "A1FREQ" in cols
+    usecols = ["TEST", "LOG10P"] + (["A1FREQ"] if use_maf else [])
+
+    p_parts, maf_dropped, seen = [], 0, set()
+    reader = pd.read_csv(path, sep=r"\s+", engine="c", comment="#",
+                         usecols=usecols, chunksize=chunksize)
+    for chunk in reader:
+        seen.update(chunk["TEST"].dropna().unique().tolist())
+        sub = chunk[chunk["TEST"] == test_label]
+        if sub.empty:
+            continue
+        log10p = pd.to_numeric(sub["LOG10P"], errors="coerce")
+        ok = log10p.notna()
+        sub, log10p = sub[ok], log10p[ok]
+        if use_maf:
+            f = pd.to_numeric(sub["A1FREQ"], errors="coerce")
+            maf = np.minimum(f, 1.0 - f)
+            keep = (maf >= min_maf).to_numpy()
+            maf_dropped += int((~keep).sum())
+            log10p = log10p[keep]
+        p_parts.append(np.power(10.0, -log10p.to_numpy()))
+
+    if not p_parts:
         raise SystemExit(
             "ERROR: no rows for TEST=%s in %s.\n  available labels: %s\n"
             "  (the interaction label varies by REGENIE version; pass --test)"
-            % (test_label, path, avail))
-    sub = sub[pd.to_numeric(sub["LOG10P"], errors="coerce").notna()]
-    maf_dropped = 0
-    if min_maf > 0 and "A1FREQ" in sub.columns:
-        f = pd.to_numeric(sub["A1FREQ"], errors="coerce")
-        maf = np.minimum(f, 1.0 - f)
-        keep = maf >= min_maf
-        maf_dropped = int((~keep).sum())
-        sub = sub[keep]
-    log10p = pd.to_numeric(sub["LOG10P"], errors="coerce").to_numpy()
-    p = np.power(10.0, -log10p)
-    p = np.clip(p, 1e-300, 1.0)
+            % (test_label, path, sorted(seen)))
+    p = np.clip(np.concatenate(p_parts), 1e-300, 1.0)
     chi2 = stats.chi2.isf(p, df=1)
-    return chi2, len(sub), maf_dropped, p
+    return chi2, len(p), maf_dropped, p
 
 
 def summarize(chi2, p):
