@@ -174,6 +174,7 @@ The helper scripts live in `scripts/` and `workflow.py` invokes them as `{ROOT}/
 | `collect_h2.py` | parse LDSC `--h2` logs → one table (pooled-vs-stratified, or per-chromosome) |
 | `assign_pseudo_hap.py` | split females by the male I-vs-R ancestry propensity → female pseudo-Hap |
 | `female_negcontrol.py` | re-test male interaction hits for SNP×pseudo-Hap in females (artefact check) |
+| `summarize.py` | read every arm's result files → `conclusions.txt`, a plain-language statement of what each arm does/does not support (final `summarize` target) |
 
 `top_interactions.py --test` defaults to `ADD-INT_SNPxHap`; **verify the exact TEST label in
 your REGENIE output header** — it varies by version, and a mismatch makes the script exit empty.

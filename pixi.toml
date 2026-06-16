@@ -1,7 +1,7 @@
 [workspace]
 name = "y-strat-gwas"
 description = "SNP x Y-haplogroup interaction + cross-stratum genetic correlation"
-channels = ["conda-forge", "bioconda", "gwforg", "r"]
+channels = ["conda-forge", "bioconda", "gwforg", "r", "munch-group"]
 platforms = ["linux-64"]
 
 [dependencies]
@@ -22,6 +22,7 @@ pybedtools = "*"
 r-base = ">=4.2.3,<4.3"
 r-remotes = ">=2.5.0,<3"
 r-rcpparmadillo = ">=0.12.8.4.0,<0.13"
+geneinfo = ">=5.6.37,<6"
 
 [tasks]
 # Install the LDSC python3 fork without letting pip build any C-extension deps

@@ -154,7 +154,9 @@ def run_workflow_targets():
              "female_pseudohap", "female_negcontrol",
              # chrX (only present when XBFILE is set)
              "xqc", "interaction_X", "top_int_X",
-             "gwas_X_I", "xforldsc_I", "gwas_X_R", "xforldsc_R"]
+             "gwas_X_I", "xforldsc_I", "gwas_X_R", "xforldsc_R",
+             # final: plain-language conclusion of every arm
+             "summarize"]
     order = [t for t in order if t in wf.gwf.targets]
 
     for name in order:
@@ -284,6 +286,12 @@ def validate(wf):
     check("h2_by_chromosome covers chr 1-22",
           sorted(perchr["chrom"].astype(str)) == sorted(str(c) for c in range(1, 23)),
           "%d chromosomes" % len(perchr))
+
+    if os.path.isfile("%s/conclusions.txt" % OUT):
+        concl = open("%s/conclusions.txt" % OUT).read()
+        check("conclusions.txt covers every arm",
+              all(h in concl for h in ("ARM A", "ARM B", "FEMALES", "LAVA")),
+              "headers present")
 
     print("\n%s" % ("ALL CHECKS PASSED" if ok else "SOME CHECKS FAILED"))
     return ok

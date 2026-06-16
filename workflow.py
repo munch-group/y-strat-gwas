@@ -79,7 +79,8 @@ PERM_FORCE_SNPS   = _env("PERM_FORCE_SNPS", "")       # comma-sep SNP IDs to alw
 # to enable; empty disables. Format: "name=chr:start-end,name2=chr:start-end".
 LAVA_LOCI       = _env("LAVA_LOCI", "")  # "" disables LAVA; synthetic: realblock=20:9988-2241939,confblock=21:8710-2271328
 LAVA_REF        = _env("LAVA_REF", BFILE)             # plink ref for in-sample LD
-LAVA_PARTITION  = _env("LAVA_PARTITION", "lava_meta/blocks_s2500_m25_f1_w200.GRCh37_hg19.locfile")          # LAVA blocks file (R headline only)
+# LAVA_PARTITION  = _env("LAVA_PARTITION", "lava_meta/blocks_s2500_m25_f1_w200.GRCh37_hg19.locfile")          # LAVA blocks file (R headline only)
+LAVA_PARTITION  = _env("LAVA_PARTITION", "")          # LAVA blocks file (R headline only)
 LAVA_N_CONTROLS = int(_env("LAVA_N_CONTROLS", "300")) # negative-control loci
 LAVA_NPERM      = int(_env("LAVA_NPERM", "10000"))    # permutations per locus
 RSCRIPT         = _env("RSCRIPT", "Rscript")          # for the LAVA R step
@@ -897,3 +898,41 @@ if FBFILE:
 """.format(pixi=PIXI, root=ROOT, out=OUT, fbfile=FBFILE, fpheno=FPHENO,
            ph=PHENONAME, fcovar=FBASECOVAR, npc=NPC,
            force=("--force-snps %s" % FNEG_FORCE_SNPS) if FNEG_FORCE_SNPS else "")
+
+# ---------------------------------------------------------------------------
+# Final step: read every arm's result files and write a plain-language
+# conclusion of what each arm does / does not support -> results/conclusions.txt.
+# Inputs are gated to the final output of each ENABLED arm (same flags that build
+# those arms), so summarize runs strictly last and never declares an input that
+# no target produces.
+# ---------------------------------------------------------------------------
+_summary_inputs = [
+    "%s/top_interactions.tsv" % OUT,
+    "%s/perm_interactions.tsv" % OUT,
+    "%s/perm_lambda.txt" % OUT,
+    "%s/I_vs_R_rg.log" % OUT,
+    "%s/h2_I.log" % OUT,
+    "%s/h2_R.log" % OUT,
+]
+if H2_POOLED:
+    _summary_inputs.append("%s/h2_by_stratification.tsv" % OUT)
+if H2_PER_CHR:
+    _summary_inputs.append("%s/h2_by_chromosome.tsv" % OUT)
+if XBFILE:
+    _summary_inputs.append("%s/top_interactions_X.tsv" % OUT)
+if FBFILE:
+    _summary_inputs += ["%s/female_negative_control.tsv" % OUT,
+                        "%s/female_lambda.txt" % OUT]
+if LAVA_PARTITION:
+    _summary_inputs.append("%s/lava_local_rg.tsv" % OUT)
+if LAVA_LOCI:
+    for _e in LAVA_LOCI.split(","):
+        if "=" in _e:
+            _summary_inputs.append("%s/lava_%s_summary.txt" % (OUT, _e.split("=", 1)[0].strip()))
+
+gwf.target("summarize",
+           inputs=_summary_inputs,
+           outputs=["%s/conclusions.txt" % OUT],
+           cores=1, memory="4g", walltime="00:10:00") << """
+{pixi} python {root}/scripts/summarize.py --results-dir {out} --out {out}/conclusions.txt
+""".format(pixi=PIXI, root=ROOT, out=OUT)

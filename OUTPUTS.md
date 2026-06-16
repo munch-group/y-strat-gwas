@@ -16,6 +16,19 @@ Conventions across every file: **`Hap` is coded I = 1, R = 0**; REGENIE's effect
 
 ---
 
+## Start here — `conclusions.txt`
+
+The `summarize` target (runs last) reads every other result file and writes
+**`results/conclusions.txt`**: a plain-language statement, per arm, of what the data do and do
+**not** support, applying the interpretation rules below (genome-wide significance + permutation
+survival for Arm A; the h²-Z / rg-power gate for Arm B; the female-artefact check; LAVA screen +
+deconfounding). Every positive is hedged as provisional to the global-PC ceiling. It is a reading
+aid, not a substitute for the files it summarises — when a line surprises you, drop to the
+underlying file documented below. Disabled or unfinished arms are reported as "not available"
+rather than omitted.
+
+---
+
 ## Arm A — individual SNP × haplogroup interaction
 
 **`top_interactions.tsv`** — the headline list: the strongest `SNP × Hap` interaction hits.
